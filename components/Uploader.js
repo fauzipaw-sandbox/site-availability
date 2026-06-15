@@ -11,12 +11,18 @@ export default function Uploader() {
 
   const processFile = (file) => {
     return new Promise((resolve, reject) => {
-      // Deteksi otomatis tipe file dari namanya
+      // 1. Cek dari nama file apakah INAP atau UME
       const fileName = file.name.toUpperCase();
       const type = fileName.includes('INAP') ? 'INAP' : fileName.includes('UME') ? 'UME' : null;
 
       if (!type) {
-        resolve(`File ${file.name} dilewati (Bukan INAP/UME)`);
+        reject(new Error(`File "${file.name}" dilewati. Nama file harus mengandung kata "INAP" atau "UME".`));
+        return;
+      }
+
+      // 2. Wajib format CSV
+      if (!file.name.toLowerCase().endsWith('.csv')) {
+        reject(new Error(`Gagal: File "${file.name}" bukan CSV! Harap Save As ke format .csv terlebih dahulu di Excel.`));
         return;
       }
 
@@ -31,35 +37,50 @@ export default function Uploader() {
         },
         complete: async (results) => {
           const tableName = type === 'INAP' ? 'inap_data' : 'ume_data';
-          const formattedData = results.data.map(row => {
-            if (type === 'INAP') {
-              return {
-                period: row.period ? `${row.period.slice(0, 4)}-${row.period.slice(4, 6)}-${row.period.slice(6, 8)}` : null, 
-                site_id: row.site_id,
-                availability: parseFloat(row['availability (%)']) || 0,
-                ava_power: parseFloat(row['ava_power (%)']) || 0,
-                ava_transport: parseFloat(row['ava_transport (%)']) || 0,
-              };
+          
+          try {
+            const formattedData = results.data.map(row => {
+              if (type === 'INAP') {
+                return {
+                  period: row.period ? `${row.period.slice(0, 4)}-${row.period.slice(4, 6)}-${row.period.slice(6, 8)}` : null, 
+                  site_id: row.site_id,
+                  availability: parseFloat(row['availability (%)']) || 0,
+                  ava_power: parseFloat(row['ava_power (%)']) || 0,
+                  ava_transport: parseFloat(row['ava_transport (%)']) || 0,
+                };
+              } else {
+                const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
+                const avail2 = parseFloat(row['Cell Availability _TSEL_2']) || 0;
+                let parsedSiteId = "";
+                const matchId = row['Managed Element']?.match(/\(([^)]+)\)/);
+                if(matchId) parsedSiteId = matchId[1];
+
+                return {
+                  period: row['Begin Time'] ? row['Begin Time'].split(' ')[0] : null, 
+                  site_id: parsedSiteId,
+                  cell_avail_1: avail1,
+                  cell_avail_2: avail2,
+                  avg_cell_avail: (avail1 + avail2) / 2
+                };
+              }
+            }).filter(row => row.period !== null);
+
+            // Tembak ke Supabase
+            const { error } = await supabase.from(tableName).insert(formattedData);
+            
+            if (error) {
+              console.error("Supabase Error:", error);
+              reject(new Error(`Error Database: ${error.message}`));
             } else {
-              const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
-              const avail2 = parseFloat(row['Cell Availability _TSEL_2']) || 0;
-              let parsedSiteId = "";
-              const matchId = row['Managed Element']?.match(/\(([^)]+)\)/);
-              if(matchId) parsedSiteId = matchId[1];
-
-              return {
-                period: row['Begin Time'] ? row['Begin Time'].split(' ')[0] : null, 
-                site_id: parsedSiteId,
-                cell_avail_1: avail1,
-                cell_avail_2: avail2,
-                avg_cell_avail: (avail1 + avail2) / 2
-              };
+              resolve(`Upload ${type} sukses!`);
             }
-          }).filter(row => row.period !== null); // Buang baris kosong
-
-          const { error } = await supabase.from(tableName).insert(formattedData);
-          if (error) reject(error);
-          else resolve(`Upload ${type} sukses!`);
+          } catch (err) {
+            console.error("Mapping Error:", err);
+            reject(new Error(`Error saat membaca kolom data. Pastikan format kolom sesuai dengan sample asli.`));
+          }
+        },
+        error: (err) => {
+          reject(new Error(`Error Parsing CSV: ${err.message}`));
         }
       });
     });
@@ -67,17 +88,27 @@ export default function Uploader() {
 
   const handleFiles = async (files) => {
     setLoading(true);
+    setStatus('Memulai proses upload...');
+    
+    let hasError = false;
     for (let i = 0; i < files.length; i++) {
       setStatus(`Memproses file ${i + 1} dari ${files.length}...`);
       try {
         await processFile(files[i]);
       } catch (err) {
         console.error(err);
-        alert('Gagal upload: ' + err.message);
+        alert(err.message);
+        hasError = true;
       }
     }
-    setStatus('Semua data berhasil masuk database!');
-    setTimeout(() => window.location.reload(), 1500);
+    
+    if (!hasError) {
+      setStatus('Semua data berhasil masuk database!');
+      setTimeout(() => window.location.reload(), 1500);
+    } else {
+      setStatus('Proses selesai dengan beberapa error. Cek alert/console.');
+      setLoading(false);
+    }
   };
 
   const onDrop = (e) => {
@@ -110,7 +141,7 @@ export default function Uploader() {
         ) : (
           <div>
             <p className="font-bold text-gray-600 text-sm">Drag & Drop file CSV INAP & UME di sini</p>
-            <p className="text-xs text-gray-400 mt-1">Bisa blok banyak file sekaligus. Sistem otomatis mendeteksi dari nama file.</p>
+            <p className="text-xs text-gray-400 mt-1">Hanya menerima format .csv</p>
           </div>
         )}
       </div>
