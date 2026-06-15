@@ -13,9 +13,9 @@ export default function Uploader() {
   const inapInputRef = useRef(null);
   const umeInputRef = useRef(null);
 
-  // --- FUNGSI SAKTI: Kirim Data Dicicil (Chunking) ---
+  // --- FUNGSI SAKTI: Kirim Data Dicicil & Tangkap Error DB ---
   const insertInChunks = async (tableName, data, setStatusFunc) => {
-    const CHUNK_SIZE = 1000; // Dikirim per 1000 baris biar Supabase gak jebol
+    const CHUNK_SIZE = 1000;
     const totalChunks = Math.ceil(data.length / CHUNK_SIZE);
     
     for (let i = 0; i < totalChunks; i++) {
@@ -23,42 +23,56 @@ export default function Uploader() {
       setStatusFunc(`Mengirim ke DB: ${i * CHUNK_SIZE} dari ${data.length} baris...`);
       
       const { error } = await supabase.from(tableName).insert(chunk);
-      if (error) throw error;
+      if (error) {
+        console.error("SUPABASE ERROR DETAIL:", error);
+        // Lempar pesan error spesifik dari database biar kita tau salahnya!
+        throw new Error(error.message || error.details || JSON.stringify(error));
+      }
     }
   };
 
   // --- PROSES INAP (HANYA CSV) ---
   const processINAP = (file) => {
     setLoadingINAP(true);
-    setStatusINAP('Membaca file CSV (Tunggu sebentar)...');
+    setStatusINAP('Membaca file CSV...');
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
         try {
-          setStatusINAP('Merangum data INAP...');
-          const formattedData = results.data.map(row => ({
-            period: row.period ? `${String(row.period).slice(0, 4)}-${String(row.period).slice(4, 6)}-${String(row.period).slice(6, 8)}` : null, 
-            site_id: row.site_id,
-            availability: parseFloat(row['availability (%)']) || 0,
-            ava_power: parseFloat(row['ava_power (%)']) || 0,
-            ava_transport: parseFloat(row['ava_transport (%)']) || 0,
-          })).filter(row => row.period !== null && row.site_id);
+          setStatusINAP('Merangkum data INAP...');
+          const formattedData = results.data.map((row, index) => {
+            // Kita coba deteksi kalau ada data yang ngaco
+            try {
+              return {
+                period: row.period ? `${String(row.period).slice(0, 4)}-${String(row.period).slice(4, 6)}-${String(row.period).slice(6, 8)}` : null, 
+                site_id: row.site_id,
+                availability: parseFloat(row['availability (%)']) || 0,
+                ava_power: parseFloat(row['ava_power (%)']) || 0,
+                ava_transport: parseFloat(row['ava_transport (%)']) || 0,
+              };
+            } catch (e) {
+              throw new Error(`Gagal membaca baris ke-${index + 1}. Pastikan format header sesuai.`);
+            }
+          }).filter(row => row.period !== null && row.site_id);
 
-          if (formattedData.length === 0) throw new Error("Data kosong atau format kolom CSV tidak sesuai!");
+          if (formattedData.length === 0) throw new Error("Data kosong! Pastikan header CSV beneran ada: period, site_id, availability (%), dll.");
 
           await insertInChunks('inap_data', formattedData, setStatusINAP);
           
           setStatusINAP('✅ Sukses Upload INAP!');
-          setTimeout(() => { setLoadingINAP(false); window.location.reload(); }, 2000);
+          alert("Data INAP Berhasil masuk Database!");
+          window.location.reload();
         } catch (err) {
-          setStatusINAP(`❌ Error: ${err.message}`);
+          console.error("ERROR INAP:", err);
+          alert(`GAGAL UPLOAD INAP!\nAlasan: ${err.message}`);
+          setStatusINAP('');
           setLoadingINAP(false);
         }
       },
       error: (err) => {
-        setStatusINAP(`❌ Parsing Error: ${err.message}`);
+        alert(`GAGAL PARSING CSV!\nAlasan: ${err.message}`);
         setLoadingINAP(false);
       }
     });
@@ -67,7 +81,7 @@ export default function Uploader() {
   // --- PROSES UME (HANYA XLSX) ---
   const processUME = (file) => {
     setLoadingUME(true);
-    setStatusUME('Membaca file Excel (Ini agak lama kalau filenya gede)...');
+    setStatusUME('Membaca file Excel...');
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -80,12 +94,14 @@ export default function Uploader() {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
         setStatusUME('Merangkum data UME...');
-        const formattedData = jsonData.map(row => {
+        const formattedData = jsonData.map((row, index) => {
           const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
           const avail2 = parseFloat(row['Cell Availability _TSEL_1']) || parseFloat(row['Cell Availability _TSEL_2']) || 0; 
           
           let parsedSiteId = "";
-          const matchId = String(row['Managed Element'] || '').match(/\(([^)]+)\)/);
+          // Ekstrak Site ID lebih tangguh (jaga-jaga kalau nama kolomnya beda)
+          const rawIdString = String(row['Managed Element'] || row['ManagedElement'] || row['SubnetWork Name'] || '');
+          const matchId = rawIdString.match(/\(([^)]+)\)/);
           if(matchId) parsedSiteId = matchId[1];
 
           return {
@@ -97,15 +113,18 @@ export default function Uploader() {
           };
         }).filter(row => row.period !== null && row.site_id !== "");
 
-        if (formattedData.length === 0) throw new Error("Data kosong atau format kolom Excel tidak sesuai!");
+        if (formattedData.length === 0) throw new Error("Data kosong! Pastikan kolom 'Begin Time' dan 'Managed Element' ada di file Excel lo.");
 
         await insertInChunks('ume_data', formattedData, setStatusUME);
         
         setStatusUME('✅ Sukses Upload UME!');
-        setTimeout(() => { setLoadingUME(false); window.location.reload(); }, 2000);
+        alert("Data UME Berhasil masuk Database!");
+        window.location.reload();
 
       } catch (err) {
-        setStatusUME(`❌ Error: ${err.message}`);
+        console.error("ERROR UME:", err);
+        alert(`GAGAL UPLOAD UME!\nAlasan: ${err.message}`);
+        setStatusUME('');
         setLoadingUME(false);
       }
     };
