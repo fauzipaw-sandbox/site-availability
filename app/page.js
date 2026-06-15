@@ -6,7 +6,6 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// 1. KOMPONEN CUSTOM SEARCHABLE DROPDOWN
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -73,7 +72,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// 2. KOMPONEN CONTRIBUTOR LIST
 const ContributorList = ({ title, data, dataKey }) => (
   <div className="w-60 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
@@ -99,44 +97,67 @@ const ContributorList = ({ title, data, dataKey }) => (
 );
 
 export default function Dashboard() {
-  const [dapotMaster, setDapotMaster] = useState([]); // Menyimpan metadata site untuk filter
-  const [chartData, setChartData] = useState([]);     // Menyimpan data grafik hasil filter server-side
+  const [dapotMaster, setDapotMaster] = useState([]); 
+  const [chartData, setChartData] = useState([]);     
   const [loading, setLoading] = useState(false);
 
   const [filters, setFilters] = useState({
-    startDate: '2026-01-01', 
-    endDate: '2026-06-30', 
+    startDate: '2026-01-01', endDate: '2026-06-30', 
     nop: 'All', site_id: 'All', site_class: 'All', 
     kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
 
-  // STEP 1: Load data master dapot SEKALI SAJA pas pertama buka untuk isi dropdown filter
+  // Fungsi baca tanggal kebal error
+  const normalizeDate = (rawDate) => {
+    if (!rawDate) return null;
+    if (!isNaN(rawDate) && Number(rawDate) > 40000) {
+      const d = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+      return d.toISOString().split('T')[0];
+    }
+    const d = new Date(rawDate);
+    if (!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return rawDate;
+  };
+
+  // STEP 1: Tarik Dapot Data dengan Auto-Detect Kolom
   useEffect(() => {
     async function loadDapotMetadata() {
-      const { data } = await supabase
-        .from('dapot_data')
-        .select('site_id, site_class, power_type, grid_category_new, departemen, kotakab, kecamatan, link_route');
+      const { data, error } = await supabase.from('dapot_data').select('*');
+      if (error) {
+        console.error("Gagal load dapot_data:", error);
+        return;
+      }
       
       if (data) {
-        // Mapping nama agar sesuai dengan alias filter frontend lo
-        const mapped = data.map(item => ({
-          ...item,
-          nop: item.departemen,
-          kota_kab: item.kotakab
-        }));
+        const mapped = data.map(item => {
+          // Cari nama kolom otomatis biar gak error huruf besar/kecil
+          const getCol = (possibleNames) => {
+            const key = Object.keys(item).find(k => possibleNames.includes(k.toLowerCase()));
+            return key ? item[key] : null;
+          };
+          
+          return {
+            site_id: getCol(['site_id', 'siteid']) || 'Unknown',
+            site_class: getCol(['site_class', 'siteclass']) || 'Unknown',
+            grid_category_new: getCol(['grid_category_new', 'gridcategorynew', 'grid']) || 'Unknown',
+            nop: getCol(['departemen', 'nop']) || 'Unknown',
+            kota_kab: getCol(['kotakab', 'kota_kab', 'kabupaten']) || 'Unknown',
+            kecamatan: getCol(['kecamatan']) || 'Unknown',
+            link_route: getCol(['link_route', 'linkroute']) || 'Unknown'
+          };
+        });
         setDapotMaster(mapped);
       }
     }
     loadDapotMetadata();
   }, []);
 
-  // STEP 2: Ambil data grafik dari server SETIAP KALI filter atau tanggal berubah (SERVER-SIDE FILTER)
+  // STEP 2: Tarik Data Grafik berdasarkan Filter
   useEffect(() => {
     async function fetchFilteredChartData() {
       setLoading(true);
       let query = supabase.from('dashboard_master_view').select('*');
 
-      // Tembak filter langsung ke database Supabase biar kenceng & gak timeout
       if (filters.startDate) query = query.gte('period', filters.startDate);
       if (filters.endDate) query = query.lte('period', filters.endDate);
       if (filters.nop !== 'All') query = query.eq('nop', filters.nop);
@@ -147,17 +168,33 @@ export default function Dashboard() {
       if (filters.link_route !== 'All') query = query.eq('link_route', filters.link_route);
       if (filters.grid_category_new !== 'All') query = query.eq('grid_category_new', filters.grid_category_new);
 
-      const { data } = await query.limit(50000); // Batasi hasil query per tarikan biar enteng
-      if (data) setChartData(data);
+      const { data } = await query.limit(50000); 
+      
+      if (data && data.length > 0) {
+        const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
+        setChartData(cleanedData);
+        
+        // Auto-set tanggal 30 hari ke belakang hanya pas pertama kali render & belum diset user
+        if (filters.startDate === '2026-01-01' && chartData.length === 0) {
+           const periods = [...new Set(cleanedData.map(d => d.period))].sort();
+           if(periods.length > 0) {
+             const latest = periods[periods.length - 1];
+             const d = new Date(latest);
+             d.setDate(d.getDate() - 30);
+             const start = d.toISOString().split('T')[0];
+             setFilters(prev => ({ ...prev, startDate: start < periods[0] ? periods[0] : start, endDate: latest }));
+           }
+        }
+      } else {
+        setChartData([]);
+      }
       setLoading(false);
     }
-
     fetchFilteredChartData();
   }, [filters]);
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  // LOGIKA CASCADING FILTER: Pilihan dropdown otomatis menciut sesuai filter lain berdasarkan data dapot
   const getCascadingOptions = (targetKey) => {
     const relevantDapot = dapotMaster.filter(d => {
       for (const k in filters) {
@@ -170,7 +207,6 @@ export default function Dashboard() {
     return ['All', ...uniqueValues.sort()];
   };
 
-  // Hitung Top Worst Contributor dari data yang aktif di layar
   const getWorstContributors = (dataKey, limit = 15) => {
     const siteAvg = {};
     chartData.forEach(d => {
@@ -191,7 +227,6 @@ export default function Dashboard() {
 
   const categories = [...new Set(chartData.map(item => item.period))].sort();
 
-  // Bikin Series Grafik Berdasarkan chartData hasil olahan server
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
@@ -223,11 +258,12 @@ export default function Dashboard() {
     buildSeries('all_ne_avail', 'All NE'), buildSeries('avail_ume', 'Avail UME')
   ];
 
-  const siteClasses = getCascadingOptions('site_class').filter(opt => opt !== 'All');
+  // List kategori dipaksa valid biar grafik tetep muncul walau datanya dikit
+  const siteClasses = getCascadingOptions('site_class').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesSiteClassPower = buildSeriesByGroup('site_class', 'ava_power', siteClasses);
   const seriesSiteClassTransport = buildSeriesByGroup('site_class', 'ava_transport', siteClasses);
   
-  const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All');
+  const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
   const baseChartOptions = {
@@ -250,7 +286,6 @@ export default function Dashboard() {
   return (
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       
-      {/* FILTER BAR - FULL OPTION & AUTOMATIC CASCADING SYNC */}
       <div className="bg-white p-3 mb-3 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-b-lg flex-wrap z-50 relative">
         <div className="flex flex-col">
           <label className="text-gray-500 mb-1 font-semibold">Date Range</label>
@@ -271,7 +306,7 @@ export default function Dashboard() {
           />
         ))}
 
-        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] ml-2">Loading data dari server...</div>}
+        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] ml-2">Loading data...</div>}
       </div>
 
       <div className="px-2 relative z-0">
@@ -281,14 +316,26 @@ export default function Dashboard() {
           <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 transition-all hover:shadow-md">
             <div className="flex-1 p-2 flex flex-col min-w-0">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Type (All)</h3>
-              <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" /></div>
+              <div className="flex-1">
+                {seriesTypeAll.some(s => s.data && s.data.length > 0) ? (
+                  <Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Pilih filter atau tanggal untuk melihat data</div>
+                )}
+              </div>
             </div>
             <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" />
           </div>
           <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 transition-all hover:shadow-md">
             <div className="flex-1 p-2 flex flex-col min-w-0">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Type (Exclude SPS)</h3>
-              <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" /></div>
+              <div className="flex-1">
+                {seriesTypeAll.some(s => s.data && s.data.length > 0) ? (
+                  <Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Pilih filter atau tanggal untuk melihat data</div>
+                )}
+              </div>
             </div>
             <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" />
           </div>
@@ -301,7 +348,13 @@ export default function Dashboard() {
             </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Power)</h3>
-              <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" /></div>
+              <div className="flex-1">
+                {seriesSiteClassPower.some(s => s.data && s.data.length > 0) ? (
+                  <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia untuk filter ini</div>
+                )}
+              </div>
             </div>
             <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" />
           </div>
@@ -312,7 +365,13 @@ export default function Dashboard() {
             </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Transport)</h3>
-              <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassTransport} type="line" height="100%" /></div>
+              <div className="flex-1">
+                {seriesSiteClassTransport.some(s => s.data && s.data.length > 0) ? (
+                  <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassTransport} type="line" height="100%" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia untuk filter ini</div>
+                )}
+              </div>
             </div>
             <ContributorList title="Contributor (Worst Transport)" data={worstTransport} dataKey="ava_transport" />
           </div>
@@ -321,7 +380,13 @@ export default function Dashboard() {
         <div className="bg-white flex shadow-sm h-[280px] mb-4 rounded border border-gray-100 transition-all hover:shadow-md">
           <div className="flex-1 p-2 flex flex-col min-w-0">
             <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Grid Category</h3>
-            <div className="flex-1"><Chart options={{...baseChartOptions, yaxis: { min: 0, max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" /></div>
+            <div className="flex-1">
+              {seriesGrid.some(s => s.data && s.data.length > 0) ? (
+                <Chart options={{...baseChartOptions, yaxis: { min: 0, max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" />
+              ) : (
+                <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Grid Category tidak tersedia untuk filter ini</div>
+              )}
+            </div>
           </div>
         </div>
 
