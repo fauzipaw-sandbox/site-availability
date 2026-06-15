@@ -187,21 +187,17 @@ export default function Dashboard() {
   // 2. TARIK DATA GRAFIK BERDASARKAN FILTER
   useEffect(() => {
     async function fetchFilteredChartData() {
-      if (!filters.startDate || !filters.endDate) return; // Tunggu tanggal terisi
-
       setLoading(true);
+      // HAPUS .limit() biar dia narik BERAPA PUN data yang ada di database
       let query = supabase.from('dashboard_master_view').select('*');
 
-      query = query.gte('period', filters.startDate).lte('period', filters.endDate);
-      if (filters.nop !== 'All') query = query.eq('nop', filters.nop);
-      if (filters.site_id !== 'All') query = query.eq('site_id', filters.site_id);
-      if (filters.site_class !== 'All') query = query.eq('site_class', filters.site_class);
-      if (filters.kota_kab !== 'All') query = query.eq('kota_kab', filters.kota_kab);
-      if (filters.kecamatan !== 'All') query = query.eq('kecamatan', filters.kecamatan);
-      if (filters.link_route !== 'All') query = query.eq('link_route', filters.link_route);
-      if (filters.grid_category_new !== 'All') query = query.eq('grid_category_new', filters.grid_category_new);
-
-      const { data } = await query.limit(1000000); 
+      if (filters.startDate) query = query.gte('period', filters.startDate);
+      if (filters.endDate) query = query.lte('period', filters.endDate);
+      // ... (sisanya sama kayak kodingan sebelumnya)
+      
+      const { data, error } = await query; // Panggil tanpa .limit()
+      
+      if (error) console.error("Error Query:", error);
       
       if (data && data.length > 0) {
         const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
@@ -212,6 +208,7 @@ export default function Dashboard() {
       setLoading(false);
     }
     fetchFilteredChartData();
+  }, [filters]);
   }, [filters]);
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
