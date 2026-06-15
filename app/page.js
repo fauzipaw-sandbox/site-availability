@@ -6,7 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// KOMPONEN: CUSTOM DROPDOWN SEARCHABLE
+// KOMPONEN: CUSTOM DROPDOWN
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -104,7 +104,7 @@ export default function Dashboard() {
   const [rawServerData, setRawServerData] = useState([]); 
   const [chartData, setChartData] = useState([]);     
   
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Default loading true biar nutupin layar kosong di awal
   const [syncing, setSyncing] = useState(false);
   const [dbUpdateRange, setDbUpdateRange] = useState({ start: '-', end: '-' });
   const [tooltipData, setTooltipData] = useState(null); 
@@ -114,6 +114,7 @@ export default function Dashboard() {
     kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
 
+  // Pembersih Tanggal Kotor dari Database (Misal angka excel 45400 dirubah jadi YYYY-MM-DD)
   const normalizeDate = (rawDate) => {
     if (!rawDate) return null;
     if (!isNaN(rawDate) && Number(rawDate) > 40000) {
@@ -133,67 +134,64 @@ export default function Dashboard() {
     window.location.reload();
   };
 
-  // 1. INIT LOAD: TARIK DAPOT PAKAI JALUR VVIP (RPC)
+  // 1. ENGINE POWER BI: Tarik seluruh data mentah 1X SAJA di awal ke RAM lo
   useEffect(() => {
-    async function loadInitialSetup() {
+    async function loadInMemoryEngine() {
       setLoading(true);
       
-      // TARIK MASTER DAPOT SEKALI JALAN (No Looping)
-      const { data: dapotData, error: dapotErr } = await supabase.rpc('get_dapot_master');
-      
-      if (!dapotErr && dapotData) {
-        // Parsing data RPC (tergantung respons Supabase)
-        const parsedDapot = typeof dapotData === 'string' ? JSON.parse(dapotData) : dapotData;
-        setDapotMaster(parsedDapot.map(d => ({
-          ...d, nop: d.departemen, kota_kab: d.kotakab, category: d.category_type_non_3t, 
-          child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan
-        })));
-      }
+      try {
+        // Tarik Master Dapot
+        const { data: dapotData } = await supabase.rpc('get_dapot_master');
+        if (dapotData) {
+          const parsedDapot = typeof dapotData === 'string' ? JSON.parse(dapotData) : dapotData;
+          setDapotMaster(parsedDapot.map(d => ({
+            ...d, nop: d.departemen, kota_kab: d.kotakab, category: d.category_type_non_3t, 
+            child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan
+          })));
+        }
 
-      const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
-      const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
-      
-      if (minDate?.[0] && maxDate?.[0]) {
-        const startD = normalizeDate(minDate[0].period);
-        const endD = normalizeDate(maxDate[0].period);
-        setDbUpdateRange({ start: startD, end: endD });
-        
-        const latestDateObj = new Date(endD);
-        latestDateObj.setDate(latestDateObj.getDate() - 30);
-        const defaultStartStr = latestDateObj.toISOString().split('T')[0];
-        setFilters(prev => ({ ...prev, startDate: defaultStartStr < startD ? startD : defaultStartStr, endDate: endD }));
+        // Tarik SELURUH Data Grafik (Bypass Filter Tanggal SQL)
+        const { data: rawData, error: errData } = await supabase.rpc('get_dashboard_data');
+        if (rawData && !errData) {
+          const parsedData = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+          
+          // Bersihkan tanggal excel di frontend!
+          const cleanedData = parsedData
+            .map(d => ({ ...d, period: normalizeDate(d.period) }))
+            .filter(d => d.period); // Buang yang tanggalnya null
+            
+          setRawServerData(cleanedData);
+
+          // Auto Set Kalender berdasarkan data valid yang udah di RAM
+          if (cleanedData.length > 0) {
+            const periods = [...new Set(cleanedData.map(d => d.period))].sort();
+            const startD = periods[0];
+            const endD = periods[periods.length - 1];
+            setDbUpdateRange({ start: startD, end: endD });
+            
+            const latestDateObj = new Date(endD);
+            latestDateObj.setDate(latestDateObj.getDate() - 30);
+            const defaultStartStr = latestDateObj.toISOString().split('T')[0];
+            setFilters(prev => ({ ...prev, startDate: defaultStartStr < startD ? startD : defaultStartStr, endDate: endD }));
+          }
+        }
+      } catch (error) {
+        console.error("Error In-Memory Load:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
-    loadInitialSetup();
+    loadInMemoryEngine();
   }, []);
 
-  // 2. FETCH GRAFIK PAKAI JALUR VVIP (RPC) - HANYA SAAT TANGGAL BERUBAH
-  useEffect(() => {
-    async function fetchServerData() {
-      if (!filters.startDate || !filters.endDate) return;
-      setLoading(true);
-
-      const { data, error } = await supabase.rpc('get_dashboard_data', { 
-        start_d: filters.startDate, 
-        end_d: filters.endDate 
-      });
-      
-      if (!error && data) {
-        const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
-        setRawServerData(parsedData.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
-      } else {
-        console.error("Gagal tarik data:", error);
-        setRawServerData([]);
-      }
-      setLoading(false);
-    }
-    fetchServerData();
-  }, [filters.startDate, filters.endDate]);
-
-  // 3. SLICING LOKAL ALA POWER BI (Instan tanpa request server)
+  // 2. SLICING DATA DI MEMORI (LOKAL) - 0 Detik Delay!
   useEffect(() => {
     const filtered = rawServerData.filter(d => {
+      // Filter Tanggal dari Frontend biar gak dirusak SQL
+      if (filters.startDate && d.period < filters.startDate) return false;
+      if (filters.endDate && d.period > filters.endDate) return false;
+      
+      // Filter Atribut Lain
       if (filters.nop !== 'All' && d.nop !== filters.nop) return false;
       if (filters.site_id !== 'All' && d.site_id !== filters.site_id) return false;
       if (filters.site_class !== 'All' && d.site_class !== filters.site_class) return false;
@@ -392,7 +390,7 @@ export default function Dashboard() {
         {filterDropdowns.map(filter => (
           <SearchableSelect key={filter.key} label={filter.label} options={getCascadingOptions(filter.key)} value={filters[filter.key]} onChange={(val) => handleFilterChange(filter.key, val)} />
         ))}
-        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0 px-2">Memuat 100% Data...</div>}
+        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0 px-2">Memuat 100% Data ke Memori...</div>}
       </div>
 
       <div className="relative z-0">
