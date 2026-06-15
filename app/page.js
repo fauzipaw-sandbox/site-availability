@@ -6,7 +6,6 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// KOMPONEN: CUSTOM DROPDOWN SEARCHABLE
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -64,7 +63,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// KOMPONEN: CONTRIBUTOR LIST
 const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength, onHover, onClickSite }) => {
   return (
     <div className="w-full md:w-48 bg-white p-3 border-t md:border-t-0 md:border-l border-gray-100 flex flex-col z-10">
@@ -122,11 +120,10 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // FUNGSI SAKTI YANG UDAH DI-FIX: Step jadi 1000 persis biar looping jalan terus!
   const fetchAllData = async (tableName, columns, customQuery = null) => {
     let allData = [];
     let start = 0;
-    const step = 1000; // <--- INI KUNCI UTAMANYA BRO! HARUS 1000
+    const step = 1000; 
     let hasMore = true;
 
     while (hasMore) {
@@ -134,15 +131,16 @@ export default function Dashboard() {
       if (customQuery) query = customQuery(query);
       
       const { data, error } = await query;
-      if (error || !data || data.length === 0) {
+      if (error) {
+        console.error("Supabase Error:", error);
+        alert(`GAGAL TARIK DATA SERVER!\nError: ${error.message}`);
+        hasMore = false;
+      } else if (!data || data.length === 0) {
         hasMore = false;
       } else {
         allData = allData.concat(data);
-        if (data.length < step) {
-          hasMore = false; // Kalau tarikan terakhir kurang dari 1000, baru stop
-        } else {
-          start += step; // Lanjut tarik halaman berikutnya
-        }
+        if (data.length < step) hasMore = false;
+        else start += step;
       }
     }
     return allData;
@@ -151,7 +149,6 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadInitialSetup() {
       setLoading(true);
-      // Looping tarik semua data Dapot
       const dapotData = await fetchAllData('dapot_data', 'site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route');
       
       if (dapotData && dapotData.length > 0) {
@@ -161,9 +158,11 @@ export default function Dashboard() {
         })));
       }
 
-      const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
-      const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
+      const { data: minDate, error: minErr } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
+      const { data: maxDate, error: maxErr } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
       
+      if (minErr || maxErr) console.error("Error Date Range:", minErr || maxErr);
+
       if (minDate?.[0] && maxDate?.[0]) {
         const startD = normalizeDate(minDate[0].period);
         const endD = normalizeDate(maxDate[0].period);
