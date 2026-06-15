@@ -6,6 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
+// KOMPONEN: CUSTOM DROPDOWN SEARCHABLE
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -63,6 +64,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
+// KOMPONEN: CONTRIBUTOR LIST
 const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength, onHover, onClickSite }) => {
   return (
     <div className="w-full md:w-48 bg-white p-3 border-t md:border-t-0 md:border-l border-gray-100 flex flex-col z-10">
@@ -99,8 +101,8 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength, o
 
 export default function Dashboard() {
   const [dapotMaster, setDapotMaster] = useState([]); 
-  const [rawServerData, setRawServerData] = useState([]); // DATA MENTAH DARI SERVER (IN-MEMORY)
-  const [chartData, setChartData] = useState([]);     // DATA JADI SETELAH DIFILTER LOKAL
+  const [rawServerData, setRawServerData] = useState([]); 
+  const [chartData, setChartData] = useState([]);     
   
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -123,47 +125,26 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  const fetchAllData = async (tableName, columns, customQuery = null) => {
-    let allData = [];
-    let start = 0;
-    const step = 1000; 
-    let hasMore = true;
-
-    while (hasMore) {
-      let query = supabase.from(tableName).select(columns).range(start, start + step - 1);
-      if (customQuery) query = customQuery(query);
-      
-      const { data, error } = await query;
-      if (error) {
-        console.error("Supabase Error:", error);
-        hasMore = false;
-      } else if (!data || data.length === 0) {
-        hasMore = false;
-      } else {
-        allData = allData.concat(data);
-        if (data.length < step) hasMore = false;
-        else start += step;
-      }
-    }
-    return allData;
-  };
-
-  // TOMBOL SYNC MANUAL (Refresh Materialized View)
   const handleSyncDB = async () => {
     setSyncing(true);
     await supabase.rpc('refresh_master_data');
     setSyncing(false);
-    alert("✅ Database berhasil disinkronisasi dengan data Upload terbaru!\nSilakan klik OK untuk merefresh grafik.");
+    alert("✅ Database disinkronisasi! Klik OK untuk refresh.");
     window.location.reload();
   };
 
+  // 1. INIT LOAD: TARIK DAPOT PAKAI JALUR VVIP (RPC)
   useEffect(() => {
     async function loadInitialSetup() {
       setLoading(true);
-      const dapotData = await fetchAllData('dapot_data', 'site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route');
       
-      if (dapotData && dapotData.length > 0) {
-        setDapotMaster(dapotData.map(d => ({
+      // TARIK MASTER DAPOT SEKALI JALAN (No Looping)
+      const { data: dapotData, error: dapotErr } = await supabase.rpc('get_dapot_master');
+      
+      if (!dapotErr && dapotData) {
+        // Parsing data RPC (tergantung respons Supabase)
+        const parsedDapot = typeof dapotData === 'string' ? JSON.parse(dapotData) : dapotData;
+        setDapotMaster(parsedDapot.map(d => ({
           ...d, nop: d.departemen, kota_kab: d.kotakab, category: d.category_type_non_3t, 
           child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan
         })));
@@ -187,21 +168,22 @@ export default function Dashboard() {
     loadInitialSetup();
   }, []);
 
-  // ENGINE POWER BI - TAHAP 1: Ambil data dari server HANYA saat Tanggal Berubah
+  // 2. FETCH GRAFIK PAKAI JALUR VVIP (RPC) - HANYA SAAT TANGGAL BERUBAH
   useEffect(() => {
     async function fetchServerData() {
       if (!filters.startDate || !filters.endDate) return;
-
       setLoading(true);
-      const colsToFetch = 'period, site_id, ava_power, ava_transport, inap_avail, avail_ume, all_ne_avail, site_class, grid_category_new, nop, kota_kab, kecamatan, link_route';
 
-      const data = await fetchAllData('dashboard_master_view', colsToFetch, (query) => {
-        return query.gte('period', filters.startDate).lte('period', filters.endDate);
+      const { data, error } = await supabase.rpc('get_dashboard_data', { 
+        start_d: filters.startDate, 
+        end_d: filters.endDate 
       });
       
-      if (data.length > 0) {
-        setRawServerData(data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
+      if (!error && data) {
+        const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+        setRawServerData(parsedData.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
       } else {
+        console.error("Gagal tarik data:", error);
         setRawServerData([]);
       }
       setLoading(false);
@@ -209,7 +191,7 @@ export default function Dashboard() {
     fetchServerData();
   }, [filters.startDate, filters.endDate]);
 
-  // ENGINE POWER BI - TAHAP 2: Filtering Dropdown & Klik Site Instan di Memori Lokal (0 detik)
+  // 3. SLICING LOKAL ALA POWER BI (Instan tanpa request server)
   useEffect(() => {
     const filtered = rawServerData.filter(d => {
       if (filters.nop !== 'All' && d.nop !== filters.nop) return false;
@@ -410,7 +392,7 @@ export default function Dashboard() {
         {filterDropdowns.map(filter => (
           <SearchableSelect key={filter.key} label={filter.label} options={getCascadingOptions(filter.key)} value={filters[filter.key]} onChange={(val) => handleFilterChange(filter.key, val)} />
         ))}
-        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0 px-2">Memuat Data Database...</div>}
+        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0 px-2">Memuat 100% Data...</div>}
       </div>
 
       <div className="relative z-0">
