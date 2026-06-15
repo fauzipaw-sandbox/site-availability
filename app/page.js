@@ -122,10 +122,11 @@ export default function Dashboard() {
     return rawDate;
   };
 
+  // FUNGSI SAKTI YANG UDAH DI-FIX: Step jadi 1000 persis biar looping jalan terus!
   const fetchAllData = async (tableName, columns, customQuery = null) => {
     let allData = [];
     let start = 0;
-    const step = 2000; 
+    const step = 1000; // <--- INI KUNCI UTAMANYA BRO! HARUS 1000
     let hasMore = true;
 
     while (hasMore) {
@@ -137,8 +138,11 @@ export default function Dashboard() {
         hasMore = false;
       } else {
         allData = allData.concat(data);
-        if (data.length < step) hasMore = false;
-        else start += step;
+        if (data.length < step) {
+          hasMore = false; // Kalau tarikan terakhir kurang dari 1000, baru stop
+        } else {
+          start += step; // Lanjut tarik halaman berikutnya
+        }
       }
     }
     return allData;
@@ -147,6 +151,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadInitialSetup() {
       setLoading(true);
+      // Looping tarik semua data Dapot
       const dapotData = await fetchAllData('dapot_data', 'site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route');
       
       if (dapotData && dapotData.length > 0) {
@@ -164,7 +169,6 @@ export default function Dashboard() {
         const endD = normalizeDate(maxDate[0].period);
         setDbUpdateRange({ start: startD, end: endD });
         
-        // Auto default load 30 hari ke belakang biar sekenceng Power BI
         const latestDateObj = new Date(endD);
         latestDateObj.setDate(latestDateObj.getDate() - 30);
         const defaultStartStr = latestDateObj.toISOString().split('T')[0];
@@ -301,7 +305,6 @@ export default function Dashboard() {
   const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
-  // FIX POIN 1: Legend ukuran font dikecilin jadi 9px biar rapi
   const baseChartOptions = {
     chart: { type: 'line', animations: { enabled: false }, toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, zoom: { enabled: true, type: 'x' } },
     stroke: { width: 2, curve: 'smooth' }, 
@@ -318,11 +321,10 @@ export default function Dashboard() {
 
   const siteClassColors = ['#CD7F32', '#C0C0C0', '#FFD700', '#3B82F6', '#FF69B4'];
 
-  // FIX POIN 4: Fungsi deteksi warna dinamis untuk popup kelas dapot
   const getDynamicClassColor = (cls) => {
     switch(String(cls).toUpperCase()) {
       case 'BRONZE': return 'text-[#CD7F32]';
-      case 'SILVER': return 'text-[#sig-silver] font-bold text-gray-400';
+      case 'SILVER': return 'text-[#C0C0C0] font-bold text-gray-500';
       case 'GOLD': return 'text-[#FFD700]';
       case 'PLATINUM': return 'text-[#3B82F6]';
       case 'DIAMOND': return 'text-[#FF69B4]';
@@ -341,7 +343,6 @@ export default function Dashboard() {
     <div className="p-2 md:p-4 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       <style dangerouslySetInnerHTML={{__html: `.apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }`}} />
 
-      {/* FLOATING PORTAL TOOLTIP POPUP */}
       {tooltipData && (
         <div 
           className="fixed bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-[9999] w-56 text-[10px] text-gray-600 pointer-events-none"
@@ -350,7 +351,6 @@ export default function Dashboard() {
             left: Math.min(tooltipData.x + 10, window.innerWidth - 250)  
           }}
         >
-          {/* FIX POIN 4: Atas bawah (stacked), warna kelas dinamis */}
           <div className="flex flex-col gap-1.5">
             <div className="border-b pb-1 flex justify-between"><span className="font-bold text-gray-800">Site ID: {tooltipData.item.site_id}</span><span className={`font-bold ${getDynamicClassColor(tooltipData.meta.site_class)}`}>{tooltipData.meta.site_class || '-'}</span></div>
             <div className="truncate"><span className="font-semibold">Name:</span> {tooltipData.meta.site_name || '-'}</div>
