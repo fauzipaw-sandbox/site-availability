@@ -107,7 +107,6 @@ export default function Dashboard() {
     kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
 
-  // Fungsi baca tanggal kebal error
   const normalizeDate = (rawDate) => {
     if (!rawDate) return null;
     if (!isNaN(rawDate) && Number(rawDate) > 40000) {
@@ -119,18 +118,11 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // STEP 1: Tarik Dapot Data dengan Auto-Detect Kolom
   useEffect(() => {
     async function loadDapotMetadata() {
-      const { data, error } = await supabase.from('dapot_data').select('*');
-      if (error) {
-        console.error("Gagal load dapot_data:", error);
-        return;
-      }
-      
+      const { data } = await supabase.from('dapot_data').select('*');
       if (data) {
         const mapped = data.map(item => {
-          // Cari nama kolom otomatis biar gak error huruf besar/kecil
           const getCol = (possibleNames) => {
             const key = Object.keys(item).find(k => possibleNames.includes(k.toLowerCase()));
             return key ? item[key] : null;
@@ -152,7 +144,6 @@ export default function Dashboard() {
     loadDapotMetadata();
   }, []);
 
-  // STEP 2: Tarik Data Grafik berdasarkan Filter
   useEffect(() => {
     async function fetchFilteredChartData() {
       setLoading(true);
@@ -168,13 +159,13 @@ export default function Dashboard() {
       if (filters.link_route !== 'All') query = query.eq('link_route', filters.link_route);
       if (filters.grid_category_new !== 'All') query = query.eq('grid_category_new', filters.grid_category_new);
 
-      const { data } = await query.limit(50000); 
+      // FIX LIMIT: Ditingkatin jadi 1 Juta baris biar ditarik mau berbulan-bulan juga
+      const { data } = await query.limit(1000000); 
       
       if (data && data.length > 0) {
         const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
         setChartData(cleanedData);
         
-        // Auto-set tanggal 30 hari ke belakang hanya pas pertama kali render & belum diset user
         if (filters.startDate === '2026-01-01' && chartData.length === 0) {
            const periods = [...new Set(cleanedData.map(d => d.period))].sort();
            if(periods.length > 0) {
@@ -258,7 +249,6 @@ export default function Dashboard() {
     buildSeries('all_ne_avail', 'All NE'), buildSeries('avail_ume', 'Avail UME')
   ];
 
-  // List kategori dipaksa valid biar grafik tetep muncul walau datanya dikit
   const siteClasses = getCascadingOptions('site_class').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesSiteClassPower = buildSeriesByGroup('site_class', 'ava_power', siteClasses);
   const seriesSiteClassTransport = buildSeriesByGroup('site_class', 'ava_transport', siteClasses);
@@ -266,12 +256,14 @@ export default function Dashboard() {
   const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
+  // FIX GRAFIK: Hapus min: 94 biar auto-scale ngikutin data anjlok. 
+  // Tools toolbar disesuaikan dan di-scale via CSS.
   const baseChartOptions = {
-    chart: { type: 'line', toolbar: { show: true, tools: { download: true, zoom: true, pan: true } }, zoom: { enabled: true, type: 'x' } },
+    chart: { type: 'line', toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, zoom: { enabled: true, type: 'x' } },
     stroke: { width: 2.5, curve: 'straight' },
     markers: { size: 3, hover: { size: 6 } }, 
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
-    yaxis: { min: 94, max: 100, tickAmount: 4, labels: { style: { fontSize: '9px' } } },
+    yaxis: { max: 100, labels: { style: { fontSize: '9px' }, formatter: (val) => val.toFixed(1) } },
     legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
     grid: { show: true, strokeDashArray: 4, borderColor: '#f1f1f1' }
   };
@@ -286,6 +278,11 @@ export default function Dashboard() {
   return (
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       
+      {/* SUNTIKAN CSS: Buat ngecilin Toolbar ApexCharts 30% biar gak menuh-menuhin mata */}
+      <style dangerouslySetInnerHTML={{__html: `
+        .apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }
+      `}} />
+
       <div className="bg-white p-3 mb-3 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-b-lg flex-wrap z-50 relative">
         <div className="flex flex-col">
           <label className="text-gray-500 mb-1 font-semibold">Date Range</label>
@@ -382,7 +379,7 @@ export default function Dashboard() {
             <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Grid Category</h3>
             <div className="flex-1">
               {seriesGrid.some(s => s.data && s.data.length > 0) ? (
-                <Chart options={{...baseChartOptions, yaxis: { min: 0, max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" />
+                <Chart options={{...baseChartOptions, yaxis: { max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" />
               ) : (
                 <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Grid Category tidak tersedia untuk filter ini</div>
               )}
