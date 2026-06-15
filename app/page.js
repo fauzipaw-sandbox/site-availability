@@ -6,7 +6,6 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// 1. UPDATE: Dropdown sekarang bisa ngebaca format { value, label }
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -24,7 +23,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
     String(opt.label || opt).toLowerCase().includes(search.toLowerCase())
   );
 
-  // Cari label yang lagi aktif buat ditampilin di tombol
   const activeLabel = options.find(opt => (opt.value || opt) === value)?.label || value;
 
   return (
@@ -83,7 +81,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// 2. UPDATE: Lebar diperkecil (w-48), Warna bar jadi Rose-Red (bg-rose-500)
 const ContributorList = ({ title, data, dataKey }) => (
   <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
@@ -113,8 +110,9 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState([]);     
   const [loading, setLoading] = useState(false);
 
+  // Set default ke rentang tanggal lebar, biar pas awal buka langsung narik sesuai kalender
   const [filters, setFilters] = useState({
-    startDate: '2026-01-01', endDate: '2026-06-30', 
+    startDate: '2026-01-01', endDate: '2026-12-31', 
     nop: 'All', site_id: 'All', site_class: 'All', 
     kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
@@ -130,9 +128,10 @@ export default function Dashboard() {
     return rawDate;
   };
 
+  // 1. FIX DAPOT LIMIT: Tambahin limit(100000) biar semua filter ketarik dari A-Z
   useEffect(() => {
     async function loadDapotMetadata() {
-      const { data } = await supabase.from('dapot_data').select('*');
+      const { data } = await supabase.from('dapot_data').select('*').limit(100000);
       if (data) {
         const mapped = data.map(item => {
           const getCol = (possibleNames) => {
@@ -142,7 +141,7 @@ export default function Dashboard() {
           
           return {
             site_id: getCol(['site_id', 'siteid']) || 'Unknown',
-            site_name: getCol(['site_name', 'sitename', 'name']) || '', // Tarik nama site
+            site_name: getCol(['site_name', 'sitename', 'name']) || '',
             site_class: getCol(['site_class', 'siteclass']) || 'Unknown',
             grid_category_new: getCol(['grid_category_new', 'gridcategorynew', 'grid']) || 'Unknown',
             nop: getCol(['departemen', 'nop']) || 'Unknown',
@@ -157,6 +156,7 @@ export default function Dashboard() {
     loadDapotMetadata();
   }, []);
 
+  // 2. FIX TANGGAL: Logika paksaan 30 hari dihapus. Murni ngikutin state `filters`
   useEffect(() => {
     async function fetchFilteredChartData() {
       setLoading(true);
@@ -177,17 +177,6 @@ export default function Dashboard() {
       if (data && data.length > 0) {
         const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
         setChartData(cleanedData);
-        
-        if (filters.startDate === '2026-01-01' && chartData.length === 0) {
-           const periods = [...new Set(cleanedData.map(d => d.period))].sort();
-           if(periods.length > 0) {
-             const latest = periods[periods.length - 1];
-             const d = new Date(latest);
-             d.setDate(d.getDate() - 30);
-             const start = d.toISOString().split('T')[0];
-             setFilters(prev => ({ ...prev, startDate: start < periods[0] ? periods[0] : start, endDate: latest }));
-           }
-        }
       } else {
         setChartData([]);
       }
@@ -198,7 +187,6 @@ export default function Dashboard() {
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  // 3. UPDATE: Mapping Cascading biar Site ID gabung sama Site Name
   const getCascadingOptions = (targetKey) => {
     const relevantDapot = dapotMaster.filter(d => {
       for (const k in filters) {
@@ -245,6 +233,7 @@ export default function Dashboard() {
 
   const categories = [...new Set(chartData.map(item => item.period))].sort();
 
+  // 3. FIX TOOLTIP: Hitung "siteCount" trus lempar ke ApexCharts
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
@@ -252,7 +241,8 @@ export default function Dashboard() {
       if(!dayData.length) return null;
       return {
         x: new Date(date).getTime(),
-        y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2))
+        y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2)),
+        siteCount: dayData.length // Rahasia nampilin jumlah site per hari
       };
     }).filter(item => item !== null).sort((a, b) => a.x - b.x)
   });
@@ -265,7 +255,8 @@ export default function Dashboard() {
         if(!match.length) return null;
         return {
           x: new Date(date).getTime(),
-          y: parseFloat((match.reduce((acc, curr) => acc + Number(curr[dataKey]), 0) / match.length).toFixed(2))
+          y: parseFloat((match.reduce((acc, curr) => acc + Number(curr[dataKey]), 0) / match.length).toFixed(2)),
+          siteCount: match.length
         };
       }).filter(item => item !== null).sort((a, b) => a.x - b.x)
     }));
@@ -283,20 +274,31 @@ export default function Dashboard() {
   const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
-  // 4. UPDATE: Grafik Smooth, Animasi Dimatikan biar anti lag, Garis lebih tipis
   const baseChartOptions = {
     chart: { 
       type: 'line', 
-      animations: { enabled: false }, // MEMATIKAN ANIMASI BIAR BROWSER ENTENG!
+      animations: { enabled: false }, 
       toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, 
       zoom: { enabled: true, type: 'x' } 
     },
-    stroke: { width: 2, curve: 'smooth' }, // GARIS DIBUAT SMOOTH
-    markers: { size: 0, hover: { size: 5 } }, // Titik disembunyikan kecuali pas dihover biar bersih
+    stroke: { width: 2, curve: 'smooth' }, 
+    markers: { size: 0, hover: { size: 5 } }, 
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
     yaxis: { max: 100, labels: { style: { fontSize: '9px' }, formatter: (val) => val.toFixed(1) } },
     legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
-    grid: { show: true, strokeDashArray: 3, borderColor: '#f1f1f1' }
+    grid: { show: true, strokeDashArray: 3, borderColor: '#f1f1f1' },
+    // LOGIKA POPUP (TOOLTIP) SHARED + SITE COUNT
+    tooltip: {
+      shared: true,
+      intersect: false,
+      y: {
+        formatter: function (val, { seriesIndex, dataPointIndex, w }) {
+          const dataPoint = w?.globals?.initialSeries?.[seriesIndex]?.data?.[dataPointIndex];
+          const count = dataPoint?.siteCount ? ` | ${dataPoint.siteCount} Site` : '';
+          return `${val.toFixed(2)}% ${count}`;
+        }
+      }
+    }
   };
 
   const filterDropdowns = [
