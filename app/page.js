@@ -6,7 +6,6 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// 1. KOMPONEN CUSTOM DROPDOWN (Punya fitur Search & Delete/Clear)
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -73,7 +72,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// Komponen Contributor List (Top Worst)
 const ContributorList = ({ title, data, dataKey }) => (
   <div className="w-60 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
@@ -102,7 +100,7 @@ export default function Dashboard() {
   const [masterData, setMasterData] = useState([]);
   
   const [filters, setFilters] = useState({
-    startDate: '', endDate: '', flag_ne_id: 'All', nop: 'All', 
+    startDate: '', endDate: '', nop: 'All', 
     site_id: 'All', site_class: 'All', kota_kab: 'All', 
     kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
@@ -120,15 +118,25 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function fetchData() {
-      // FIX LIMIT: Tarik sampai 100.000 baris biar nggak ada data yang kepotong!
-      const { data } = await supabase.from('dashboard_master_view').select('*').limit(100000);
+      // Tarik sejuta baris biar aman dari potongan data
+      const { data } = await supabase.from('dashboard_master_view').select('*').limit(1000000);
       if (data && data.length > 0) {
         const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
         setMasterData(cleanedData);
         
         const periods = [...new Set(cleanedData.map(d => d.period))].sort();
         if (periods.length > 0) {
-          setFilters(prev => ({ ...prev, startDate: periods[0], endDate: periods[periods.length - 1] }));
+          const latestDateStr = periods[periods.length - 1];
+          const latestDateObj = new Date(latestDateStr);
+          
+          // Mundurin 30 hari ke belakang buat default view
+          latestDateObj.setDate(latestDateObj.getDate() - 30);
+          const thirtyDaysAgoStr = latestDateObj.toISOString().split('T')[0];
+          
+          // Jaga-jaga kalau data aslinya umurnya kurang dari 30 hari
+          const finalStartDate = thirtyDaysAgoStr < periods[0] ? periods[0] : thirtyDaysAgoStr;
+
+          setFilters(prev => ({ ...prev, startDate: finalStartDate, endDate: latestDateStr }));
         }
       }
     }
@@ -146,7 +154,7 @@ export default function Dashboard() {
       if (filterStart && dTime < filterStart) isValid = false;
       if (filterEnd && dTime > filterEnd) isValid = false;
       
-      const filterKeys = ['flag_ne_id', 'nop', 'site_id', 'site_class', 'kota_kab', 'kecamatan', 'link_route', 'grid_category_new'];
+      const filterKeys = ['nop', 'site_id', 'site_class', 'kota_kab', 'kecamatan', 'link_route', 'grid_category_new'];
       filterKeys.forEach(key => {
         if (filters[key] !== 'All' && d[key] !== filters[key]) isValid = false;
       });
@@ -156,7 +164,7 @@ export default function Dashboard() {
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  // FIX FILTER SYNC: Ambil opsi berdasarkan data yang sudah terfilter oleh filter LAINNYA
+  // Options nge-bypass tanggal, jadi dropdown nampilin full opsi se-database
   const getCascadingOptions = (targetKey) => {
     const relevantData = masterData.filter(d => {
       for (const k in filters) {
@@ -189,7 +197,6 @@ export default function Dashboard() {
 
   const categories = [...new Set(filteredData.map(item => item.period))].sort();
 
-  // FIX ZOOM CHART: Pastikan data benar-benar timestamp ascending murni biar nggak bentrok
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
@@ -199,7 +206,7 @@ export default function Dashboard() {
         x: new Date(date).getTime(),
         y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2))
       };
-    }).filter(item => item !== null).sort((a, b) => a.x - b.x) // Urutkan paksa
+    }).filter(item => item !== null).sort((a, b) => a.x - b.x)
   });
 
   const buildSeriesByGroup = (groupKey, dataKey, groupList) => {
@@ -239,16 +246,15 @@ export default function Dashboard() {
   };
 
   const filterDropdowns = [
-    { label: 'Flag NE ID', key: 'flag_ne_id' }, { label: 'NOP', key: 'nop' },
-    { label: 'Site ID', key: 'site_id' }, { label: 'Site Class', key: 'site_class' },
-    { label: 'Kota/Kab', key: 'kota_kab' }, { label: 'Kecamatan', key: 'kecamatan' },
-    { label: 'Link Route', key: 'link_route' }, { label: 'Grid', key: 'grid_category_new' }
+    { label: 'NOP', key: 'nop' }, { label: 'Site ID', key: 'site_id' }, 
+    { label: 'Site Class', key: 'site_class' }, { label: 'Kota/Kab', key: 'kota_kab' }, 
+    { label: 'Kecamatan', key: 'kecamatan' }, { label: 'Link Route', key: 'link_route' }, 
+    { label: 'Grid', key: 'grid_category_new' }
   ];
 
   return (
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       
-      {/* FILTER BAR - SEKARANG PAKE SEARCHABLE DROPDOWN */}
       <div className="bg-white p-3 mb-3 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-b-lg flex-wrap z-50 relative">
         <div className="flex flex-col">
           <label className="text-gray-500 mb-1 font-semibold">Date Range</label>
