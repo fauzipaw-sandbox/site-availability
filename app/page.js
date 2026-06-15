@@ -81,38 +81,68 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-const ContributorList = ({ title, data, dataKey }) => (
-  <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
-    <div className="flex items-center justify-between mb-3">
-      <h4 className="text-[11px] font-bold text-gray-700 flex items-center">
-        <span className="text-rose-600 mr-2 text-lg leading-none">•</span> {title}
-      </h4>
+// KOMPONEN CONTRIBUTOR DENGAN HOVER POPUP TOOLTIP
+const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength }) => {
+  return (
+    <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-[11px] font-bold text-gray-700 flex items-center">
+          <span className="text-rose-600 mr-2 text-lg leading-none">•</span> {title}
+        </h4>
+      </div>
+      <div className="flex-1 overflow-y-auto pr-1">
+        {data.map((item, idx) => {
+          const val = Number(item[dataKey]) || 0;
+          // Cari metadata dari dapotMaster
+          const siteMeta = dapotMaster.find(d => d.site_id === item.site_id) || {};
+          
+          // Kalkulasi Total Outage (Hrs) otomatis: (100% - Avail%) * 24 Jam * Jumlah Hari Aktif
+          const lossPercentage = (100 - val) / 100;
+          const totalOutageHrs = (lossPercentage * 24 * (chartDataLength || 1)).toFixed(2);
+
+          return (
+            <div key={idx} className="flex items-center text-[10px] mb-1.5 relative group cursor-help">
+              <span className="w-12 truncate text-gray-500 font-medium">{item.site_id}</span>
+              <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
+                <div 
+                  className="absolute top-0 right-0 h-full bg-rose-500 rounded-sm" 
+                  style={{ width: `${Math.max(0, 100 - val)}%` }} 
+                ></div>
+              </div>
+              <span className="w-8 text-right text-gray-700 font-bold">{val.toFixed(2)}</span>
+
+              {/* TOOLTIP POPUP (Muncul pas di-hover) */}
+              <div className="absolute top-0 right-full mr-2 hidden group-hover:flex flex-col bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-50 w-56 text-[10px] text-gray-600">
+                <div className="grid grid-cols-[100px_1fr] gap-x-2 gap-y-1">
+                  <div className="text-right font-semibold">Site ID</div><div className="font-bold text-gray-800">{item.site_id}</div>
+                  <div className="text-right font-semibold">Avg Ava Power</div><div>{(Number(item.ava_power) || val).toFixed(2)}</div>
+                  <div className="text-right font-semibold">Site Name</div><div className="truncate" title={siteMeta.site_name}>{siteMeta.site_name || '-'}</div>
+                  <div className="text-right font-semibold">Site Class</div><div>{siteMeta.site_class || '-'}</div>
+                  <div className="text-right font-semibold">Power Type</div><div>{siteMeta.power_type || '-'}</div>
+                  <div className="text-right font-semibold">Transport Type</div><div>{siteMeta.transport_type || '-'}</div>
+                  <div className="text-right font-semibold">Avg Ava Transport</div><div>{(Number(item.ava_transport) || val).toFixed(2)}</div>
+                  <div className="text-right font-semibold">Total Outage (Hrs)</div><div className="font-bold text-rose-600">{totalOutageHrs}</div>
+                  <div className="text-right font-semibold">Category</div><div>{siteMeta.category || '-'}</div>
+                  <div className="text-right font-semibold">Child Total</div><div>{siteMeta.child_total || '-'}</div>
+                  <div className="text-right font-semibold">Child Site ID</div><div className="truncate">{siteMeta.child_site_id || '-'}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
-    <div className="flex-1 overflow-y-auto pr-1">
-      {data.map((item, idx) => (
-        <div key={idx} className="flex items-center text-[10px] mb-1.5">
-          <span className="w-12 truncate text-gray-500 font-medium" title={item.site_id}>{item.site_id}</span>
-          <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
-            <div 
-              className="absolute top-0 right-0 h-full bg-rose-500 rounded-sm" 
-              style={{ width: `${Math.max(0, 100 - (Number(item[dataKey]) || 0))}%` }} 
-            ></div>
-          </div>
-          <span className="w-8 text-right text-gray-700 font-bold">{(Number(item[dataKey]) || 0).toFixed(2)}</span>
-        </div>
-      ))}
-    </div>
-  </div>
-);
+  );
+};
 
 export default function Dashboard() {
   const [dapotMaster, setDapotMaster] = useState([]); 
   const [chartData, setChartData] = useState([]);     
   const [loading, setLoading] = useState(false);
+  const [dbUpdateRange, setDbUpdateRange] = useState({ start: '-', end: '-' });
 
-  // Set default ke rentang tanggal lebar, biar pas awal buka langsung narik sesuai kalender
   const [filters, setFilters] = useState({
-    startDate: '2026-01-01', endDate: '2026-12-31', 
+    startDate: '', endDate: '', 
     nop: 'All', site_id: 'All', site_class: 'All', 
     kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
@@ -128,42 +158,41 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // 1. FIX DAPOT LIMIT: Tambahin limit(100000) biar semua filter ketarik dari A-Z
+  // 1. TARIK DATA UPDATE (HEADER KANAN) & MASTER DATA
   useEffect(() => {
-    async function loadDapotMetadata() {
-      const { data } = await supabase.from('dapot_data').select('*').limit(100000);
-      if (data) {
-        const mapped = data.map(item => {
-          const getCol = (possibleNames) => {
-            const key = Object.keys(item).find(k => possibleNames.includes(k.toLowerCase()));
-            return key ? item[key] : null;
-          };
-          
-          return {
-            site_id: getCol(['site_id', 'siteid']) || 'Unknown',
-            site_name: getCol(['site_name', 'sitename', 'name']) || '',
-            site_class: getCol(['site_class', 'siteclass']) || 'Unknown',
-            grid_category_new: getCol(['grid_category_new', 'gridcategorynew', 'grid']) || 'Unknown',
-            nop: getCol(['departemen', 'nop']) || 'Unknown',
-            kota_kab: getCol(['kotakab', 'kota_kab', 'kabupaten']) || 'Unknown',
-            kecamatan: getCol(['kecamatan']) || 'Unknown',
-            link_route: getCol(['link_route', 'linkroute']) || 'Unknown'
-          };
-        });
-        setDapotMaster(mapped);
+    async function loadInitialSetup() {
+      // Tarik Tanggal Min & Max buat Header Kanan
+      const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
+      const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
+      
+      let startD = '-', endD = '-';
+      if (minDate?.[0] && maxDate?.[0]) {
+        startD = normalizeDate(minDate[0].period);
+        endD = normalizeDate(maxDate[0].period);
+        setDbUpdateRange({ start: startD, end: endD });
+        
+        // Auto-set filter kalender ngikutin data full
+        setFilters(prev => ({ ...prev, startDate: startD, endDate: endD }));
+      }
+
+      // Tarik Dapot Master buat Dropdown & Tooltip
+      const { data: dapotData } = await supabase.from('dashboard_master_view').select('site_id, site_name, site_class, power_type, transport_type, category, child_total, child_site_id, grid_category_new, nop, kota_kab, kecamatan, link_route').limit(100000);
+      if (dapotData) {
+        setDapotMaster(dapotData);
       }
     }
-    loadDapotMetadata();
+    loadInitialSetup();
   }, []);
 
-  // 2. FIX TANGGAL: Logika paksaan 30 hari dihapus. Murni ngikutin state `filters`
+  // 2. TARIK DATA GRAFIK BERDASARKAN FILTER
   useEffect(() => {
     async function fetchFilteredChartData() {
+      if (!filters.startDate || !filters.endDate) return; // Tunggu tanggal terisi
+
       setLoading(true);
       let query = supabase.from('dashboard_master_view').select('*');
 
-      if (filters.startDate) query = query.gte('period', filters.startDate);
-      if (filters.endDate) query = query.lte('period', filters.endDate);
+      query = query.gte('period', filters.startDate).lte('period', filters.endDate);
       if (filters.nop !== 'All') query = query.eq('nop', filters.nop);
       if (filters.site_id !== 'All') query = query.eq('site_id', filters.site_id);
       if (filters.site_class !== 'All') query = query.eq('site_class', filters.site_class);
@@ -217,12 +246,19 @@ export default function Dashboard() {
     const siteAvg = {};
     chartData.forEach(d => {
       if (d[dataKey] == null) return; 
-      if (!siteAvg[d.site_id]) siteAvg[d.site_id] = { sum: 0, count: 0 };
+      if (!siteAvg[d.site_id]) siteAvg[d.site_id] = { sum: 0, count: 0, ava_power: 0, ava_transport: 0 };
       siteAvg[d.site_id].sum += Number(d[dataKey]);
+      siteAvg[d.site_id].ava_power += Number(d.ava_power || d[dataKey]);
+      siteAvg[d.site_id].ava_transport += Number(d.ava_transport || d[dataKey]);
       siteAvg[d.site_id].count += 1;
     });
     return Object.keys(siteAvg)
-      .map(site_id => ({ site_id, [dataKey]: siteAvg[site_id].sum / siteAvg[site_id].count }))
+      .map(site_id => ({ 
+        site_id, 
+        [dataKey]: siteAvg[site_id].sum / siteAvg[site_id].count,
+        ava_power: siteAvg[site_id].ava_power / siteAvg[site_id].count,
+        ava_transport: siteAvg[site_id].ava_transport / siteAvg[site_id].count
+      }))
       .sort((a, b) => a[dataKey] - b[dataKey])
       .slice(0, limit);
   };
@@ -233,16 +269,15 @@ export default function Dashboard() {
 
   const categories = [...new Set(chartData.map(item => item.period))].sort();
 
-  // 3. FIX TOOLTIP: Hitung "siteCount" trus lempar ke ApexCharts
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
       const dayData = chartData.filter(d => d.period === date && d[key] != null);
-      if(!dayData.length) return null;
+      if(!dayData.length) return null; // FIX UME: Kalau beneran kosong biarin null biar garisnya bypass nyambung lurus
       return {
         x: new Date(date).getTime(),
         y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2)),
-        siteCount: dayData.length // Rahasia nampilin jumlah site per hari
+        siteCount: dayData.length
       };
     }).filter(item => item !== null).sort((a, b) => a.x - b.x)
   });
@@ -287,10 +322,10 @@ export default function Dashboard() {
     yaxis: { max: 100, labels: { style: { fontSize: '9px' }, formatter: (val) => val.toFixed(1) } },
     legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
     grid: { show: true, strokeDashArray: 3, borderColor: '#f1f1f1' },
-    // LOGIKA POPUP (TOOLTIP) SHARED + SITE COUNT
     tooltip: {
       shared: true,
       intersect: false,
+      theme: 'light',
       y: {
         formatter: function (val, { seriesIndex, dataPointIndex, w }) {
           const dataPoint = w?.globals?.initialSeries?.[seriesIndex]?.data?.[dataPointIndex];
@@ -315,7 +350,14 @@ export default function Dashboard() {
         .apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }
       `}} />
 
-      <div className="bg-white p-3 mb-3 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-b-lg flex-wrap z-50 relative">
+      {/* HEADER UPDATE DATA KANAN ATAS */}
+      <div className="flex justify-end px-3 pt-2">
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 rounded-full text-[10px] font-bold shadow-sm">
+          Data Update: {dbUpdateRange.start} s/d {dbUpdateRange.end}
+        </div>
+      </div>
+
+      <div className="bg-white p-3 mb-3 mt-2 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-lg flex-wrap z-50 relative">
         <div className="flex flex-col">
           <label className="text-gray-500 mb-1 font-semibold">Date Range</label>
           <div className="flex items-center">
@@ -353,7 +395,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" />
+            <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" dapotMaster={dapotMaster} chartDataLength={categories.length} />
           </div>
           <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 transition-all hover:shadow-md">
             <div className="flex-1 p-2 flex flex-col min-w-0">
@@ -366,7 +408,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" />
+            <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" dapotMaster={dapotMaster} chartDataLength={categories.length} />
           </div>
         </div>
 
@@ -385,7 +427,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" />
+            <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" dapotMaster={dapotMaster} chartDataLength={categories.length} />
           </div>
           
           <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row transition-all hover:shadow-md">
@@ -402,7 +444,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <ContributorList title="Contributor (Worst Transport)" data={worstTransport} dataKey="ava_transport" />
+            <ContributorList title="Contributor (Worst Transport)" data={worstTransport} dataKey="ava_transport" dapotMaster={dapotMaster} chartDataLength={categories.length} />
           </div>
         </div>
 
