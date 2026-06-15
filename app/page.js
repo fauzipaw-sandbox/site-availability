@@ -1,12 +1,79 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import dynamic from 'next/dynamic';
 import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// Komponen Contributor List
+// 1. KOMPONEN CUSTOM DROPDOWN (Punya fitur Search & Delete/Clear)
+const SearchableSelect = ({ label, options, value, onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const wrapperRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredOptions = options.filter(opt => String(opt).toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="flex flex-col w-32 relative" ref={wrapperRef}>
+      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]" title={label}>{label}</label>
+      <div 
+        className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300 transition-colors"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className="truncate flex-1">{value}</span>
+        {value !== 'All' ? (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onChange('All'); }} 
+            className="text-red-400 hover:text-red-600 font-bold ml-1 px-1"
+            title="Clear filter"
+          >✕</button>
+        ) : (
+          <span className="text-gray-400 text-[8px] ml-1">▼</span>
+        )}
+      </div>
+      
+      {isOpen && (
+        <div className="absolute top-full left-0 w-48 mt-1 bg-white border border-gray-200 rounded shadow-xl z-50">
+          <div className="p-1.5 border-b bg-gray-50 rounded-t">
+            <input 
+              type="text" 
+              className="w-full px-2 py-1 text-[10px] outline-none border rounded" 
+              placeholder={`Cari ${label}...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+            />
+          </div>
+          <ul className="max-h-48 overflow-y-auto">
+            {filteredOptions.length > 0 ? filteredOptions.map(opt => (
+              <li 
+                key={opt} 
+                className="px-3 py-1.5 hover:bg-blue-50 cursor-pointer text-[10px] border-b border-gray-50 last:border-0"
+                onClick={() => { onChange(opt); setIsOpen(false); setSearch(''); }}
+              >
+                {opt}
+              </li>
+            )) : (
+              <li className="px-3 py-2 text-[10px] text-gray-400 italic">Tidak ditemukan</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Komponen Contributor List (Top Worst)
 const ContributorList = ({ title, data, dataKey }) => (
   <div className="w-60 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
@@ -40,7 +107,6 @@ export default function Dashboard() {
     kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
 
-  // FUNGSI SAKTI: Merapihkan format tanggal Excel/Supabase yang ngaco
   const normalizeDate = (rawDate) => {
     if (!rawDate) return null;
     if (!isNaN(rawDate) && Number(rawDate) > 40000) {
@@ -48,35 +114,27 @@ export default function Dashboard() {
       return d.toISOString().split('T')[0];
     }
     const d = new Date(rawDate);
-    if (!isNaN(d.getTime())) {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
+    if (!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return rawDate;
   };
 
   useEffect(() => {
     async function fetchData() {
-      const { data } = await supabase.from('dashboard_master_view').select('*');
+      // FIX LIMIT: Tarik sampai 100.000 baris biar nggak ada data yang kepotong!
+      const { data } = await supabase.from('dashboard_master_view').select('*').limit(100000);
       if (data && data.length > 0) {
-        
-        // Bersihkan tanggal dari database biar sinkron
         const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
         setMasterData(cleanedData);
         
         const periods = [...new Set(cleanedData.map(d => d.period))].sort();
         if (periods.length > 0) {
-          setFilters(prev => ({
-            ...prev,
-            startDate: periods[0],
-            endDate: periods[periods.length - 1]
-          }));
+          setFilters(prev => ({ ...prev, startDate: periods[0], endDate: periods[periods.length - 1] }));
         }
       }
     }
     fetchData();
   }, []);
 
-  // LOGIKA FILTER TANGGAL (Super Kebal)
   const filteredData = useMemo(() => {
     const filterStart = filters.startDate ? new Date(filters.startDate).getTime() : 0;
     const filterEnd = filters.endDate ? new Date(filters.endDate).getTime() : Infinity;
@@ -98,8 +156,16 @@ export default function Dashboard() {
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  const getOptions = (key) => {
-    const uniqueValues = [...new Set(masterData.map(item => item[key]).filter(Boolean))];
+  // FIX FILTER SYNC: Ambil opsi berdasarkan data yang sudah terfilter oleh filter LAINNYA
+  const getCascadingOptions = (targetKey) => {
+    const relevantData = masterData.filter(d => {
+      for (const k in filters) {
+        if (k === 'startDate' || k === 'endDate' || k === targetKey) continue;
+        if (filters[k] !== 'All' && d[k] !== filters[k]) return false;
+      }
+      return true;
+    });
+    const uniqueValues = [...new Set(relevantData.map(item => item[targetKey]).filter(Boolean))];
     return ['All', ...uniqueValues.sort()];
   };
 
@@ -123,6 +189,7 @@ export default function Dashboard() {
 
   const categories = [...new Set(filteredData.map(item => item.period))].sort();
 
+  // FIX ZOOM CHART: Pastikan data benar-benar timestamp ascending murni biar nggak bentrok
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
@@ -132,7 +199,7 @@ export default function Dashboard() {
         x: new Date(date).getTime(),
         y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2))
       };
-    }).filter(item => item !== null) 
+    }).filter(item => item !== null).sort((a, b) => a.x - b.x) // Urutkan paksa
   });
 
   const buildSeriesByGroup = (groupKey, dataKey, groupList) => {
@@ -145,7 +212,7 @@ export default function Dashboard() {
           x: new Date(date).getTime(),
           y: parseFloat((match.reduce((acc, curr) => acc + Number(curr[dataKey]), 0) / match.length).toFixed(2))
         };
-      }).filter(item => item !== null)
+      }).filter(item => item !== null).sort((a, b) => a.x - b.x)
     }));
   };
 
@@ -154,15 +221,15 @@ export default function Dashboard() {
     buildSeries('all_ne_avail', 'All NE'), buildSeries('ume_avail', 'Avail UME')
   ];
 
-  const siteClasses = getOptions('site_class').filter(opt => opt !== 'All');
+  const siteClasses = getCascadingOptions('site_class').filter(opt => opt !== 'All');
   const seriesSiteClassPower = buildSeriesByGroup('site_class', 'ava_power', siteClasses);
   const seriesSiteClassTransport = buildSeriesByGroup('site_class', 'ava_transport', siteClasses);
   
-  const gridCategories = getOptions('grid_category_new').filter(opt => opt !== 'All');
+  const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
   const baseChartOptions = {
-    chart: { type: 'line', toolbar: { show: true, tools: { download: false } }, zoom: { enabled: true } },
+    chart: { type: 'line', toolbar: { show: true, tools: { download: true, zoom: true, pan: true } }, zoom: { enabled: true, type: 'x' } },
     stroke: { width: 2.5, curve: 'straight' },
     markers: { size: 3, hover: { size: 6 } }, 
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
@@ -179,37 +246,42 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans">
-      <div className="bg-white p-2 mb-2 border-b flex items-center gap-2 overflow-x-auto text-[10px]">
+    <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
+      
+      {/* FILTER BAR - SEKARANG PAKE SEARCHABLE DROPDOWN */}
+      <div className="bg-white p-3 mb-3 border-b flex items-center gap-3 overflow-x-visible text-[10px] shadow-sm rounded-b-lg flex-wrap z-50 relative">
         <div className="flex flex-col">
-          <label className="text-gray-500 mb-1 font-semibold">Date</label>
-          <div className="flex">
-            <input type="date" value={filters.startDate} onChange={(e) => handleFilterChange('startDate', e.target.value)} className="border px-1 py-0.5 rounded-l outline-none focus:border-blue-400"/>
-            <input type="date" value={filters.endDate} onChange={(e) => handleFilterChange('endDate', e.target.value)} className="border-y border-r px-1 py-0.5 rounded-r outline-none focus:border-blue-400"/>
+          <label className="text-gray-500 mb-1 font-semibold">Date Range</label>
+          <div className="flex items-center">
+            <input type="date" value={filters.startDate} onChange={(e) => handleFilterChange('startDate', e.target.value)} className="border px-2 py-1.5 rounded-l outline-none focus:border-blue-400 text-[10px]"/>
+            <span className="bg-gray-100 border-y px-2 py-1.5 text-gray-400">to</span>
+            <input type="date" value={filters.endDate} onChange={(e) => handleFilterChange('endDate', e.target.value)} className="border-y border-r px-2 py-1.5 rounded-r outline-none focus:border-blue-400 text-[10px]"/>
           </div>
         </div>
+        
         {filterDropdowns.map(filter => (
-          <div key={filter.key} className="flex flex-col w-24">
-            <label className="text-gray-500 mb-1 truncate font-semibold" title={filter.label}>{filter.label}</label>
-            <select value={filters[filter.key]} onChange={(e) => handleFilterChange(filter.key, e.target.value)} className="border px-1 py-1 rounded outline-none focus:border-blue-400">
-              {getOptions(filter.key).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
-          </div>
+          <SearchableSelect 
+            key={filter.key} 
+            label={filter.label} 
+            options={getCascadingOptions(filter.key)} 
+            value={filters[filter.key]} 
+            onChange={(val) => handleFilterChange(filter.key, val)} 
+          />
         ))}
       </div>
 
-      <div className="px-2">
+      <div className="px-2 relative z-0">
         <Uploader />
 
-        <div className="flex gap-2 mb-2 h-[280px]">
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100">
+        <div className="flex gap-3 mb-3 h-[280px]">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 transition-all hover:shadow-md">
             <div className="flex-1 p-2 flex flex-col min-w-0">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Type (All)</h3>
               <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" /></div>
             </div>
             <ContributorList title="Contributor (Selected Filter)" data={worstINAP} dataKey="inap_avail" />
           </div>
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 transition-all hover:shadow-md">
             <div className="flex-1 p-2 flex flex-col min-w-0">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Type (Exclude SPS)</h3>
               <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" /></div>
@@ -218,21 +290,20 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="flex gap-2 mb-2 h-[280px]">
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row">
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10">
+        <div className="flex gap-3 mb-3 h-[280px]">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row transition-all hover:shadow-md">
+            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10 rounded-l">
               <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">POWER</span>
             </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Power)</h3>
               <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" /></div>
             </div>
-            {/* CONTRIBUTOR POWER SEKARANG ADA DI SINI */}
             <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" />
           </div>
           
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row">
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row transition-all hover:shadow-md">
+            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10 rounded-l">
               <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">TRANSPORT</span>
             </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
@@ -243,7 +314,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white flex shadow-sm h-[280px] mb-4 rounded border border-gray-100">
+        <div className="bg-white flex shadow-sm h-[280px] mb-4 rounded border border-gray-100 transition-all hover:shadow-md">
           <div className="flex-1 p-2 flex flex-col min-w-0">
             <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Grid Category</h3>
             <div className="flex-1"><Chart options={{...baseChartOptions, yaxis: { min: 0, max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" /></div>
