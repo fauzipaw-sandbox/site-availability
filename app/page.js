@@ -84,7 +84,7 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength, o
               className="flex items-center text-[10px] mb-1.5 cursor-pointer hover:bg-gray-50 rounded p-0.5 transition-colors"
               onMouseEnter={(e) => onHover({ x: e.clientX, y: e.clientY, item, meta: siteMeta, outage: totalOutageHrs, val })}
               onMouseLeave={() => onHover(null)}
-              onClick={() => onClickSite(item.site_id)} // SYNC KLIK KE GRAFIK
+              onClick={() => onClickSite(item.site_id)} 
             >
               <span className="w-12 truncate text-gray-500 font-medium">{item.site_id}</span>
               <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
@@ -104,7 +104,7 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState([]);     
   const [loading, setLoading] = useState(false);
   const [dbUpdateRange, setDbUpdateRange] = useState({ start: '-', end: '-' });
-  const [tooltipData, setTooltipData] = useState(null); // STATE UNTUK POPUP MENGAMBANG
+  const [tooltipData, setTooltipData] = useState(null); 
 
   const [filters, setFilters] = useState({
     startDate: '', endDate: '', nop: 'All', site_id: 'All', site_class: 'All', 
@@ -122,11 +122,10 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // FUNGSI SAKTI: Narik Data Looping Bypass Limit Supabase
   const fetchAllData = async (tableName, columns, customQuery = null) => {
     let allData = [];
     let start = 0;
-    const step = 1000; // Limit per tarikan
+    const step = 1000; 
     let hasMore = true;
 
     while (hasMore) {
@@ -148,7 +147,6 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadInitialSetup() {
       setLoading(true);
-      // Pake loop tarik master data biar nembus 1000 limit
       const dapotData = await fetchAllData('dapot_data', 'site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route');
       
       if (dapotData && dapotData.length > 0) {
@@ -158,7 +156,6 @@ export default function Dashboard() {
         })));
       }
 
-      // Ambil Range Tanggal
       const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
       const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
       
@@ -167,7 +164,6 @@ export default function Dashboard() {
         const endD = normalizeDate(maxDate[0].period);
         setDbUpdateRange({ start: startD, end: endD });
         
-        // Default 1 Bulan
         const latestDateObj = new Date(endD);
         latestDateObj.setDate(latestDateObj.getDate() - 30);
         const defaultStartStr = latestDateObj.toISOString().split('T')[0];
@@ -178,13 +174,11 @@ export default function Dashboard() {
     loadInitialSetup();
   }, []);
 
-  // FETCH DATA GRAFIK (Looping Pagination + Hemat Memori)
   useEffect(() => {
     async function fetchFilteredChartData() {
       if (!filters.startDate || !filters.endDate) return;
 
       setLoading(true);
-      // Kolom disederhanakan biar gak menuhin RAM HP
       const colsToFetch = 'period, site_id, ava_power, ava_transport, inap_avail, avail_ume, all_ne_avail, site_class, grid_category_new';
 
       const chartRawData = await fetchAllData('dashboard_master_view', colsToFetch, (query) => {
@@ -257,6 +251,11 @@ export default function Dashboard() {
       .slice(0, limit);
   };
 
+  // INI DIA VARIABEL YANG KELUPAAN KEMARIN!
+  const worstINAP = getWorstContributors('inap_avail');
+  const worstPower = getWorstContributors('ava_power');
+  const worstTransport = getWorstContributors('ava_transport');
+
   const categories = [...new Set(chartData.map(item => item.period))].sort();
 
   const buildSeries = (key, name) => ({
@@ -316,7 +315,6 @@ export default function Dashboard() {
     }}}
   };
 
-  // FIX POIN 3: Platinum diganti jadi Biru Terang (#3B82F6)
   const siteClassColors = ['#CD7F32', '#C0C0C0', '#FFD700', '#3B82F6', '#FF69B4'];
 
   const filterDropdowns = [
@@ -330,13 +328,12 @@ export default function Dashboard() {
     <div className="p-2 md:p-4 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       <style dangerouslySetInnerHTML={{__html: `.apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }`}} />
 
-      {/* FLOATING PORTAL TOOLTIP (Pasti Tampil & Gak Kepotong) */}
       {tooltipData && (
         <div 
           className="fixed bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-[9999] w-56 text-[10px] text-gray-600 pointer-events-none"
           style={{ 
-            top: Math.min(tooltipData.y + 10, window.innerHeight - 250), // Biar gak nembus layar bawah
-            left: Math.min(tooltipData.x + 10, window.innerWidth - 250)  // Biar gak nembus layar kanan
+            top: Math.min(tooltipData.y + 10, window.innerHeight - 250), 
+            left: Math.min(tooltipData.x + 10, window.innerWidth - 250)  
           }}
         >
           <div className="grid grid-cols-[90px_1fr] gap-x-2 gap-y-1">
