@@ -6,8 +6,9 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
+// Komponen Contributor List
 const ContributorList = ({ title, data, dataKey }) => (
-  <div className="w-56 bg-white p-3 border-l border-gray-100 flex flex-col">
+  <div className="w-60 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
       <h4 className="text-[11px] font-bold text-gray-700 flex items-center">
         <span className="text-pink-600 mr-2 text-lg leading-none">•</span> {title}
@@ -39,14 +40,30 @@ export default function Dashboard() {
     kecamatan: 'All', link_route: 'All', grid_category_new: 'All'
   });
 
+  // FUNGSI SAKTI: Merapihkan format tanggal Excel/Supabase yang ngaco
+  const normalizeDate = (rawDate) => {
+    if (!rawDate) return null;
+    if (!isNaN(rawDate) && Number(rawDate) > 40000) {
+      const d = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+      return d.toISOString().split('T')[0];
+    }
+    const d = new Date(rawDate);
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    return rawDate;
+  };
+
   useEffect(() => {
     async function fetchData() {
-      const { data } = await supabase.from('dashboard_master_view').select('*').order('period');
+      const { data } = await supabase.from('dashboard_master_view').select('*');
       if (data && data.length > 0) {
-        setMasterData(data);
         
-        // AUTO SET TANGGAL: Narik tanggal terlama dan terbaru langsung dari database
-        const periods = data.map(d => d.period).filter(Boolean).sort();
+        // Bersihkan tanggal dari database biar sinkron
+        const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
+        setMasterData(cleanedData);
+        
+        const periods = [...new Set(cleanedData.map(d => d.period))].sort();
         if (periods.length > 0) {
           setFilters(prev => ({
             ...prev,
@@ -59,11 +76,17 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
+  // LOGIKA FILTER TANGGAL (Super Kebal)
   const filteredData = useMemo(() => {
+    const filterStart = filters.startDate ? new Date(filters.startDate).getTime() : 0;
+    const filterEnd = filters.endDate ? new Date(filters.endDate).getTime() : Infinity;
+
     return masterData.filter(d => {
       let isValid = true;
-      if (filters.startDate && d.period < filters.startDate) isValid = false;
-      if (filters.endDate && d.period > filters.endDate) isValid = false;
+      const dTime = new Date(d.period).getTime();
+      
+      if (filterStart && dTime < filterStart) isValid = false;
+      if (filterEnd && dTime > filterEnd) isValid = false;
       
       const filterKeys = ['flag_ne_id', 'nop', 'site_id', 'site_class', 'kota_kab', 'kecamatan', 'link_route', 'grid_category_new'];
       filterKeys.forEach(key => {
@@ -100,7 +123,6 @@ export default function Dashboard() {
 
   const categories = [...new Set(filteredData.map(item => item.period))].sort();
 
-  // FIX GRAFIK: Pakai Number() biar Supabase ga ngirim string, dan ngecek null beneran
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
@@ -197,23 +219,25 @@ export default function Dashboard() {
         </div>
 
         <div className="flex gap-2 mb-2 h-[280px]">
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative overflow-hidden">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row">
+            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10">
+              <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">POWER</span>
+            </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Power)</h3>
               <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" /></div>
             </div>
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center">
-              <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">POWER</span>
-            </div>
+            {/* CONTRIBUTOR POWER SEKARANG ADA DI SINI */}
+            <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" />
           </div>
           
-          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative overflow-hidden">
+          <div className="flex-1 bg-white flex shadow-sm rounded border border-gray-100 relative flex-row">
+            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center z-10">
+              <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">TRANSPORT</span>
+            </div>
             <div className="flex-1 p-2 flex flex-col min-w-0 pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Transport)</h3>
               <div className="flex-1"><Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassTransport} type="line" height="100%" /></div>
-            </div>
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gray-50 border-r flex items-center justify-center">
-              <span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest whitespace-nowrap">TRANSPORT</span>
             </div>
             <ContributorList title="Contributor (Worst Transport)" data={worstTransport} dataKey="ava_transport" />
           </div>
@@ -224,7 +248,6 @@ export default function Dashboard() {
             <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Grid Category</h3>
             <div className="flex-1"><Chart options={{...baseChartOptions, yaxis: { min: 0, max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" /></div>
           </div>
-          <ContributorList title="Contributor (Worst Power)" data={worstPower} dataKey="ava_power" />
         </div>
 
       </div>
