@@ -6,6 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
+// 1. UPDATE: Dropdown sekarang bisa ngebaca format { value, label }
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -19,16 +20,21 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filteredOptions = options.filter(opt => String(opt).toLowerCase().includes(search.toLowerCase()));
+  const filteredOptions = options.filter(opt => 
+    String(opt.label || opt).toLowerCase().includes(search.toLowerCase())
+  );
+
+  // Cari label yang lagi aktif buat ditampilin di tombol
+  const activeLabel = options.find(opt => (opt.value || opt) === value)?.label || value;
 
   return (
-    <div className="flex flex-col w-32 relative" ref={wrapperRef}>
+    <div className="flex flex-col w-40 relative" ref={wrapperRef}>
       <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]" title={label}>{label}</label>
       <div 
         className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300 transition-colors"
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span className="truncate flex-1">{value}</span>
+        <span className="truncate flex-1 pr-1">{activeLabel}</span>
         {value !== 'All' ? (
           <button 
             onClick={(e) => { e.stopPropagation(); onChange('All'); }} 
@@ -41,7 +47,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
       </div>
       
       {isOpen && (
-        <div className="absolute top-full left-0 w-48 mt-1 bg-white border border-gray-200 rounded shadow-xl z-50">
+        <div className="absolute top-full left-0 w-64 mt-1 bg-white border border-gray-200 rounded shadow-xl z-50">
           <div className="p-1.5 border-b bg-gray-50 rounded-t">
             <input 
               type="text" 
@@ -54,15 +60,20 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
             />
           </div>
           <ul className="max-h-48 overflow-y-auto">
-            {filteredOptions.length > 0 ? filteredOptions.map(opt => (
-              <li 
-                key={opt} 
-                className="px-3 py-1.5 hover:bg-blue-50 cursor-pointer text-[10px] border-b border-gray-50 last:border-0"
-                onClick={() => { onChange(opt); setIsOpen(false); setSearch(''); }}
-              >
-                {opt}
-              </li>
-            )) : (
+            {filteredOptions.length > 0 ? filteredOptions.map(opt => {
+              const optVal = opt.value || opt;
+              const optLabel = opt.label || opt;
+              return (
+                <li 
+                  key={optVal} 
+                  className="px-3 py-1.5 hover:bg-blue-50 cursor-pointer text-[10px] border-b border-gray-50 last:border-0 truncate"
+                  onClick={() => { onChange(optVal); setIsOpen(false); setSearch(''); }}
+                  title={optLabel}
+                >
+                  {optLabel}
+                </li>
+              );
+            }) : (
               <li className="px-3 py-2 text-[10px] text-gray-400 italic">Tidak ditemukan</li>
             )}
           </ul>
@@ -72,24 +83,25 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
+// 2. UPDATE: Lebar diperkecil (w-48), Warna bar jadi Rose-Red (bg-rose-500)
 const ContributorList = ({ title, data, dataKey }) => (
-  <div className="w-60 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
+  <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
     <div className="flex items-center justify-between mb-3">
       <h4 className="text-[11px] font-bold text-gray-700 flex items-center">
-        <span className="text-pink-600 mr-2 text-lg leading-none">•</span> {title}
+        <span className="text-rose-600 mr-2 text-lg leading-none">•</span> {title}
       </h4>
     </div>
     <div className="flex-1 overflow-y-auto pr-1">
       {data.map((item, idx) => (
         <div key={idx} className="flex items-center text-[10px] mb-1.5">
-          <span className="w-12 truncate text-gray-500" title={item.site_id}>{item.site_id}</span>
-          <div className="flex-1 h-3 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
+          <span className="w-12 truncate text-gray-500 font-medium" title={item.site_id}>{item.site_id}</span>
+          <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
             <div 
-              className="absolute top-0 right-0 h-full bg-orange-500 rounded-sm" 
+              className="absolute top-0 right-0 h-full bg-rose-500 rounded-sm" 
               style={{ width: `${Math.max(0, 100 - (Number(item[dataKey]) || 0))}%` }} 
             ></div>
           </div>
-          <span className="w-8 text-right text-gray-700 font-medium">{(Number(item[dataKey]) || 0).toFixed(2)}</span>
+          <span className="w-8 text-right text-gray-700 font-bold">{(Number(item[dataKey]) || 0).toFixed(2)}</span>
         </div>
       ))}
     </div>
@@ -130,6 +142,7 @@ export default function Dashboard() {
           
           return {
             site_id: getCol(['site_id', 'siteid']) || 'Unknown',
+            site_name: getCol(['site_name', 'sitename', 'name']) || '', // Tarik nama site
             site_class: getCol(['site_class', 'siteclass']) || 'Unknown',
             grid_category_new: getCol(['grid_category_new', 'gridcategorynew', 'grid']) || 'Unknown',
             nop: getCol(['departemen', 'nop']) || 'Unknown',
@@ -159,7 +172,6 @@ export default function Dashboard() {
       if (filters.link_route !== 'All') query = query.eq('link_route', filters.link_route);
       if (filters.grid_category_new !== 'All') query = query.eq('grid_category_new', filters.grid_category_new);
 
-      // FIX LIMIT: Ditingkatin jadi 1 Juta baris biar ditarik mau berbulan-bulan juga
       const { data } = await query.limit(1000000); 
       
       if (data && data.length > 0) {
@@ -186,6 +198,7 @@ export default function Dashboard() {
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
+  // 3. UPDATE: Mapping Cascading biar Site ID gabung sama Site Name
   const getCascadingOptions = (targetKey) => {
     const relevantDapot = dapotMaster.filter(d => {
       for (const k in filters) {
@@ -194,6 +207,20 @@ export default function Dashboard() {
       }
       return true;
     });
+
+    if (targetKey === 'site_id') {
+      const uniqueSites = [];
+      const seen = new Set();
+      relevantDapot.forEach(item => {
+        if (item.site_id && !seen.has(item.site_id)) {
+          seen.add(item.site_id);
+          const labelName = item.site_name ? `${item.site_id} - ${item.site_name}` : item.site_id;
+          uniqueSites.push({ value: item.site_id, label: labelName });
+        }
+      });
+      return [{ value: 'All', label: 'All' }, ...uniqueSites.sort((a, b) => a.value.localeCompare(b.value))];
+    }
+
     const uniqueValues = [...new Set(relevantDapot.map(item => item[targetKey]).filter(Boolean))];
     return ['All', ...uniqueValues.sort()];
   };
@@ -256,16 +283,20 @@ export default function Dashboard() {
   const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
-  // FIX GRAFIK: Hapus min: 94 biar auto-scale ngikutin data anjlok. 
-  // Tools toolbar disesuaikan dan di-scale via CSS.
+  // 4. UPDATE: Grafik Smooth, Animasi Dimatikan biar anti lag, Garis lebih tipis
   const baseChartOptions = {
-    chart: { type: 'line', toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, zoom: { enabled: true, type: 'x' } },
-    stroke: { width: 2.5, curve: 'straight' },
-    markers: { size: 3, hover: { size: 6 } }, 
+    chart: { 
+      type: 'line', 
+      animations: { enabled: false }, // MEMATIKAN ANIMASI BIAR BROWSER ENTENG!
+      toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, 
+      zoom: { enabled: true, type: 'x' } 
+    },
+    stroke: { width: 2, curve: 'smooth' }, // GARIS DIBUAT SMOOTH
+    markers: { size: 0, hover: { size: 5 } }, // Titik disembunyikan kecuali pas dihover biar bersih
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
     yaxis: { max: 100, labels: { style: { fontSize: '9px' }, formatter: (val) => val.toFixed(1) } },
     legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
-    grid: { show: true, strokeDashArray: 4, borderColor: '#f1f1f1' }
+    grid: { show: true, strokeDashArray: 3, borderColor: '#f1f1f1' }
   };
 
   const filterDropdowns = [
@@ -278,7 +309,6 @@ export default function Dashboard() {
   return (
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       
-      {/* SUNTIKAN CSS: Buat ngecilin Toolbar ApexCharts 30% biar gak menuh-menuhin mata */}
       <style dangerouslySetInnerHTML={{__html: `
         .apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }
       `}} />
@@ -317,7 +347,7 @@ export default function Dashboard() {
                 {seriesTypeAll.some(s => s.data && s.data.length > 0) ? (
                   <Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Pilih filter atau tanggal untuk melihat data</div>
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data tidak tersedia untuk filter ini</div>
                 )}
               </div>
             </div>
@@ -330,7 +360,7 @@ export default function Dashboard() {
                 {seriesTypeAll.some(s => s.data && s.data.length > 0) ? (
                   <Chart options={{...baseChartOptions, colors: ['#008FFB', '#775DD0', '#FF4560', '#546E7A']}} series={seriesTypeAll} type="line" height="100%" />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Pilih filter atau tanggal untuk melihat data</div>
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data tidak tersedia untuk filter ini</div>
                 )}
               </div>
             </div>
@@ -349,7 +379,7 @@ export default function Dashboard() {
                 {seriesSiteClassPower.some(s => s.data && s.data.length > 0) ? (
                   <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia untuk filter ini</div>
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia</div>
                 )}
               </div>
             </div>
@@ -366,7 +396,7 @@ export default function Dashboard() {
                 {seriesSiteClassTransport.some(s => s.data && s.data.length > 0) ? (
                   <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassTransport} type="line" height="100%" />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia untuk filter ini</div>
+                  <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia</div>
                 )}
               </div>
             </div>
@@ -381,7 +411,7 @@ export default function Dashboard() {
               {seriesGrid.some(s => s.data && s.data.length > 0) ? (
                 <Chart options={{...baseChartOptions, yaxis: { max: 100 }, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={seriesGrid} type="line" height="100%" />
               ) : (
-                <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Grid Category tidak tersedia untuk filter ini</div>
+                <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Grid Category tidak tersedia</div>
               )}
             </div>
           </div>
