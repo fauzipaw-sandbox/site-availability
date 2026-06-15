@@ -6,7 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// 1. KOMPONEN DROPDOWN DENGAN SEARCH & CLEAR
+// 1. KOMPONEN DROPDOWN SEARCHABLE
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -23,6 +23,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   const filteredOptions = options.filter(opt => 
     String(opt.label || opt).toLowerCase().includes(search.toLowerCase())
   );
+
   const activeLabel = options.find(opt => (opt.value || opt) === value)?.label || value;
 
   return (
@@ -81,7 +82,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// 2. KOMPONEN CONTRIBUTOR DENGAN HOVER POPUP FULL DATA
+// 2. KOMPONEN CONTRIBUTOR LIST DENGAN POPUP DETAIL
 const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength }) => {
   return (
     <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
@@ -95,7 +96,6 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength })
           const val = Number(item[dataKey]) || 0;
           const siteMeta = dapotMaster.find(d => d.site_id === item.site_id) || {};
           
-          // Kalkulasi Total Outage otomatis
           const lossPercentage = (100 - val) / 100;
           const totalOutageHrs = (lossPercentage * 24 * (chartDataLength || 1)).toFixed(2);
 
@@ -110,20 +110,20 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength })
               </div>
               <span className="w-8 text-right text-gray-700 font-bold">{val.toFixed(2)}</span>
 
-              {/* TOOLTIP POPUP */}
+              {/* POPUP HOVER DETAIL */}
               <div className="absolute top-0 right-full mr-2 hidden group-hover:flex flex-col bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-50 w-56 text-[10px] text-gray-600">
                 <div className="grid grid-cols-[100px_1fr] gap-x-2 gap-y-1">
-                  <div className="text-right font-semibold">Site ID</div><div className="font-bold text-gray-800">{item.site_id}</div>
-                  <div className="text-right font-semibold">Avg Ava Power</div><div>{(Number(item.ava_power) || val).toFixed(2)}</div>
-                  <div className="text-right font-semibold">Site Name</div><div className="truncate" title={siteMeta.site_name}>{siteMeta.site_name || '-'}</div>
-                  <div className="text-right font-semibold">Site Class</div><div>{siteMeta.site_class || '-'}</div>
+                  <div className="text-right font-semibold text-gray-800">Site ID</div><div className="font-bold text-gray-900">{item.site_id}</div>
+                  <div className="text-right font-semibold">Avg Ava Power</div><div>{(Number(item.ava_power) || val).toFixed(2)}%</div>
+                  <div className="text-right font-semibold">Site Name</div><div className="truncate text-gray-900 font-medium" title={siteMeta.site_name}>{siteMeta.site_name || '-'}</div>
+                  <div className="text-right font-semibold">Site Class</div><div className="font-semibold text-blue-600">{siteMeta.site_class || '-'}</div>
                   <div className="text-right font-semibold">Power Type</div><div>{siteMeta.power_type || '-'}</div>
                   <div className="text-right font-semibold">Transport Type</div><div>{siteMeta.transport_type || '-'}</div>
-                  <div className="text-right font-semibold">Avg Ava Transport</div><div>{(Number(item.ava_transport) || val).toFixed(2)}</div>
+                  <div className="text-right font-semibold">Avg Ava Transport</div><div>{(Number(item.ava_transport) || val).toFixed(2)}%</div>
                   <div className="text-right font-semibold">Total Outage (Hrs)</div><div className="font-bold text-rose-600">{totalOutageHrs}</div>
                   <div className="text-right font-semibold">Category</div><div>{siteMeta.category || '-'}</div>
-                  <div className="text-right font-semibold">Child Total</div><div>{siteMeta.child_total || '-'}</div>
-                  <div className="text-right font-semibold">Child Site ID</div><div className="truncate">{siteMeta.child_site_id || '-'}</div>
+                  <div className="text-right font-semibold">Child Total</div><div>{siteMeta.child_total || '0'}</div>
+                  <div className="text-right font-semibold">Child Site ID</div><div className="truncate" title={siteMeta.child_site_id}>{siteMeta.child_site_id || '-'}</div>
                 </div>
               </div>
             </div>
@@ -157,26 +157,23 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // 1. INIT: TARIK MASTER DATA & INFO UPDATE TANGGAL
   useEffect(() => {
     async function loadInitialSetup() {
-      // Ambil metadata asli sesuai nama kolom yang lo kasih!
+      // FIX POIN 2: Tarik dropdown langsung dari dapot_data (Anti-kepotong & Full Option)
       const { data: dapotData } = await supabase.from('dapot_data')
         .select('site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route')
         .limit(100000);
       
       if (dapotData) {
         setDapotMaster(dapotData.map(d => ({
-          ...d,
-          nop: d.departemen,
-          kota_kab: d.kotakab,
-          category: d.category_type_non_3t,
-          child_total: d.jumlah_site_anakan,
-          child_site_id: d.site_id_anakan
+          site_id: d.site_id, site_name: d.site_name, nop: d.departemen, site_class: d.site_class,
+          power_type: d.power_type, transport_type: d.transport_type, category: d.category_type_non_3t,
+          child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan, grid_category_new: d.grid_category_new,
+          kota_kab: d.kotakab, kecamatan: d.kecamatan, link_route: d.link_route
         })));
       }
 
-      // Ambil Data Update (Range Tanggal)
+      // Ambil Range Tanggal Riil di database
       const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
       const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
       
@@ -184,13 +181,23 @@ export default function Dashboard() {
         const startD = normalizeDate(minDate[0].period);
         const endD = normalizeDate(maxDate[0].period);
         setDbUpdateRange({ start: startD, end: endD });
-        setFilters(prev => ({ ...prev, startDate: startD, endDate: endD }));
+        
+        // FIX POIN 3: Default nampilin 1 bulan (30 hari) terakhir dari tanggal data paling baru
+        const latestDateObj = new Date(endD);
+        latestDateObj.setDate(latestDateObj.getDate() - 30);
+        const defaultStartStr = latestDateObj.toISOString().split('T')[0];
+        
+        setFilters(prev => ({ 
+          ...prev, 
+          startDate: defaultStartStr < startD ? startD : defaultStartStr, 
+          endDate: endD 
+        }));
       }
     }
     loadInitialSetup();
   }, []);
 
-  // 2. FILTER & FETCH GRAFIK
+  // FETCH DATA UTAMA BERDASARKAN FILTER (SERVER-SIDE FILTERING)
   useEffect(() => {
     async function fetchFilteredChartData() {
       if (!filters.startDate || !filters.endDate) return;
@@ -307,7 +314,12 @@ export default function Dashboard() {
     buildSeries('all_ne_avail', 'All NE'), buildSeries('avail_ume', 'Avail UME')
   ];
 
-  const siteClasses = getCascadingOptions('site_class').filter(opt => opt !== 'All' && opt !== 'Unknown');
+  // FIX POIN 1: Kunci urutan Site Class agar warna legend urut & sesuai request
+  const siteClassesOrder = ['BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND'];
+  const siteClasses = getCascadingOptions('site_class')
+    .filter(opt => opt !== 'All' && opt !== 'Unknown')
+    .sort((a, b) => siteClassesOrder.indexOf(a.toUpperCase()) - siteClassesOrder.indexOf(b.toUpperCase()));
+
   const seriesSiteClassPower = buildSeriesByGroup('site_class', 'ava_power', siteClasses);
   const seriesSiteClassTransport = buildSeriesByGroup('site_class', 'ava_transport', siteClasses);
   
@@ -317,7 +329,7 @@ export default function Dashboard() {
   const baseChartOptions = {
     chart: { 
       type: 'line', 
-      animations: { enabled: false }, 
+      animations: { enabled: false }, // Anti-lag pas load jutaan data
       toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, 
       zoom: { enabled: true, type: 'x' } 
     },
@@ -341,6 +353,9 @@ export default function Dashboard() {
     }
   };
 
+  // FIX POIN 1 Hex Colors: Bronze (Coklat), Silver (Silver), Gold (Emas), Platinum (Biru Muda), Diamond (Pink)
+  const siteClassColors = ['#8B4513', '#C0C0C0', '#FFD700', '#00FFFF', '#FF69B4'];
+
   const filterDropdowns = [
     { label: 'NOP', key: 'nop' }, { label: 'Site ID', key: 'site_id' }, 
     { label: 'Site Class', key: 'site_class' }, { label: 'Kota/Kab', key: 'kota_kab' }, 
@@ -352,10 +367,9 @@ export default function Dashboard() {
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       <style dangerouslySetInnerHTML={{__html: `.apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }`}} />
 
-      {/* HEADER UPDATE DATA KANAN ATAS */}
       <div className="flex justify-end px-3 pt-2">
         <div className="bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 rounded-full text-[10px] font-bold shadow-sm">
-          Data Update: {dbUpdateRange.start} s/d {dbUpdateRange.end}
+          Database Range: {dbUpdateRange.start} s/d {dbUpdateRange.end}
         </div>
       </div>
 
@@ -423,7 +437,7 @@ export default function Dashboard() {
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Power)</h3>
               <div className="flex-1">
                 {seriesSiteClassPower.some(s => s.data && s.data.length > 0) ? (
-                  <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassPower} type="line" height="100%" />
+                  <Chart options={{...baseChartOptions, colors: siteClassColors}} series={seriesSiteClassPower} type="line" height="100%" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia</div>
                 )}
@@ -440,7 +454,7 @@ export default function Dashboard() {
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Site Class (Transport)</h3>
               <div className="flex-1">
                 {seriesSiteClassTransport.some(s => s.data && s.data.length > 0) ? (
-                  <Chart options={{...baseChartOptions, colors: ['#E91E63', '#008FFB', '#FEB019', '#9E9E9E', '#795548']}} series={seriesSiteClassTransport} type="line" height="100%" />
+                  <Chart options={{...baseChartOptions, colors: siteClassColors}} series={seriesSiteClassTransport} type="line" height="100%" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Site Class tidak tersedia</div>
                 )}
