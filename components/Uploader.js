@@ -1,147 +1,140 @@
 'use client';
 import { useState, useRef } from 'react';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabaseClient';
 
 export default function Uploader() {
-  const [isDragging, setIsDragging] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('');
-  const fileInputRef = useRef(null);
+  const [loadingINAP, setLoadingINAP] = useState(false);
+  const [loadingUME, setLoadingUME] = useState(false);
+  const [statusINAP, setStatusINAP] = useState('');
+  const [statusUME, setStatusUME] = useState('');
+  
+  const inapInputRef = useRef(null);
+  const umeInputRef = useRef(null);
 
-  const processFile = (file) => {
-    return new Promise((resolve, reject) => {
-      // 1. Cek dari nama file apakah INAP atau UME
-      const fileName = file.name.toUpperCase();
-      const type = fileName.includes('INAP') ? 'INAP' : fileName.includes('UME') ? 'UME' : null;
+  // --- PROSES INAP (HANYA CSV) ---
+  const processINAP = (file) => {
+    setLoadingINAP(true);
+    setStatusINAP('Membaca CSV...');
 
-      if (!type) {
-        reject(new Error(`File "${file.name}" dilewati. Nama file harus mengandung kata "INAP" atau "UME".`));
-        return;
-      }
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        try {
+          const formattedData = results.data.map(row => ({
+            period: row.period ? `${row.period.slice(0, 4)}-${row.period.slice(4, 6)}-${row.period.slice(6, 8)}` : null, 
+            site_id: row.site_id,
+            availability: parseFloat(row['availability (%)']) || 0,
+            ava_power: parseFloat(row['ava_power (%)']) || 0,
+            ava_transport: parseFloat(row['ava_transport (%)']) || 0,
+          })).filter(row => row.period !== null);
 
-      // 2. Wajib format CSV
-      if (!file.name.toLowerCase().endsWith('.csv')) {
-        reject(new Error(`Gagal: File "${file.name}" bukan CSV! Harap Save As ke format .csv terlebih dahulu di Excel.`));
-        return;
-      }
-
-      let headerTracker = {}; 
-
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (header) => {
-          headerTracker[header] = (headerTracker[header] || 0) + 1;
-          return headerTracker[header] > 1 ? `${header}_${headerTracker[header]}` : header;
-        },
-        complete: async (results) => {
-          const tableName = type === 'INAP' ? 'inap_data' : 'ume_data';
+          setStatusINAP('Menyimpan ke database...');
+          const { error } = await supabase.from('inap_data').insert(formattedData);
           
-          try {
-            const formattedData = results.data.map(row => {
-              if (type === 'INAP') {
-                return {
-                  period: row.period ? `${row.period.slice(0, 4)}-${row.period.slice(4, 6)}-${row.period.slice(6, 8)}` : null, 
-                  site_id: row.site_id,
-                  availability: parseFloat(row['availability (%)']) || 0,
-                  ava_power: parseFloat(row['ava_power (%)']) || 0,
-                  ava_transport: parseFloat(row['ava_transport (%)']) || 0,
-                };
-              } else {
-                const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
-                const avail2 = parseFloat(row['Cell Availability _TSEL_2']) || 0;
-                let parsedSiteId = "";
-                const matchId = row['Managed Element']?.match(/\(([^)]+)\)/);
-                if(matchId) parsedSiteId = matchId[1];
-
-                return {
-                  period: row['Begin Time'] ? row['Begin Time'].split(' ')[0] : null, 
-                  site_id: parsedSiteId,
-                  cell_avail_1: avail1,
-                  cell_avail_2: avail2,
-                  avg_cell_avail: (avail1 + avail2) / 2
-                };
-              }
-            }).filter(row => row.period !== null);
-
-            // Tembak ke Supabase
-            const { error } = await supabase.from(tableName).insert(formattedData);
-            
-            if (error) {
-              console.error("Supabase Error:", error);
-              reject(new Error(`Error Database: ${error.message}`));
-            } else {
-              resolve(`Upload ${type} sukses!`);
-            }
-          } catch (err) {
-            console.error("Mapping Error:", err);
-            reject(new Error(`Error saat membaca kolom data. Pastikan format kolom sesuai dengan sample asli.`));
-          }
-        },
-        error: (err) => {
-          reject(new Error(`Error Parsing CSV: ${err.message}`));
+          if (error) throw error;
+          setStatusINAP('✅ Sukses!');
+          setTimeout(() => { setLoadingINAP(false); window.location.reload(); }, 1500);
+        } catch (err) {
+          setStatusINAP(`❌ Error: ${err.message}`);
+          setLoadingINAP(false);
         }
-      });
+      },
+      error: (err) => {
+        setStatusINAP(`❌ Parsing Error: ${err.message}`);
+        setLoadingINAP(false);
+      }
     });
   };
 
-  const handleFiles = async (files) => {
-    setLoading(true);
-    setStatus('Memulai proses upload...');
-    
-    let hasError = false;
-    for (let i = 0; i < files.length; i++) {
-      setStatus(`Memproses file ${i + 1} dari ${files.length}...`);
-      try {
-        await processFile(files[i]);
-      } catch (err) {
-        console.error(err);
-        alert(err.message);
-        hasError = true;
-      }
-    }
-    
-    if (!hasError) {
-      setStatus('Semua data berhasil masuk database!');
-      setTimeout(() => window.location.reload(), 1500);
-    } else {
-      setStatus('Proses selesai dengan beberapa error. Cek alert/console.');
-      setLoading(false);
-    }
-  };
+  // --- PROSES UME (HANYA XLSX) ---
+  const processUME = (file) => {
+    setLoadingUME(true);
+    setStatusUME('Membaca Excel...');
 
-  const onDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFiles(e.dataTransfer.files);
-    }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        // Ambil sheet pertama
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Convert ke JSON. SheetJS otomatis handle kolom duplikat jadi _1, _2 dst.
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+        setStatusUME('Memproses data...');
+        const formattedData = jsonData.map(row => {
+          // SheetJS ngasih nama kolom kembar jadi "NamaKolom_1"
+          const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
+          const avail2 = parseFloat(row['Cell Availability _TSEL_1']) || parseFloat(row['Cell Availability _TSEL_2']) || 0; 
+          
+          let parsedSiteId = "";
+          const matchId = row['Managed Element']?.match(/\(([^)]+)\)/);
+          if(matchId) parsedSiteId = matchId[1];
+
+          return {
+            period: row['Begin Time'] ? String(row['Begin Time']).split(' ')[0] : null, 
+            site_id: parsedSiteId,
+            cell_avail_1: avail1,
+            cell_avail_2: avail2,
+            avg_cell_avail: (avail1 + avail2) / 2
+          };
+        }).filter(row => row.period !== null && row.site_id !== "");
+
+        setStatusUME('Menyimpan ke database...');
+        const { error } = await supabase.from('ume_data').insert(formattedData);
+        
+        if (error) throw error;
+        setStatusUME('✅ Sukses!');
+        setTimeout(() => { setLoadingUME(false); window.location.reload(); }, 1500);
+
+      } catch (err) {
+        setStatusUME(`❌ Error: ${err.message}`);
+        setLoadingUME(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   return (
-    <div className="mb-4">
+    <div className="flex gap-4 mb-4">
+      {/* KOTAK INAP */}
       <div 
-        className={`w-full border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'}`}
-        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={onDrop}
-        onClick={() => fileInputRef.current.click()}
+        className="flex-1 border-2 border-dashed border-blue-300 bg-blue-50 hover:bg-blue-100 rounded-lg p-6 text-center cursor-pointer transition-colors"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); if(e.dataTransfer.files[0]) processINAP(e.dataTransfer.files[0]); }}
+        onClick={() => inapInputRef.current.click()}
       >
-        <input 
-          type="file" 
-          multiple 
-          accept=".csv" 
-          className="hidden" 
-          ref={fileInputRef} 
-          onChange={(e) => handleFiles(e.target.files)} 
-        />
-        {loading ? (
-          <p className="text-blue-600 font-bold animate-pulse">{status}</p>
+        <input type="file" accept=".csv" className="hidden" ref={inapInputRef} onChange={(e) => { if(e.target.files[0]) processINAP(e.target.files[0]); }} />
+        {loadingINAP ? (
+          <p className="text-blue-700 font-bold animate-pulse">{statusINAP}</p>
         ) : (
           <div>
-            <p className="font-bold text-gray-600 text-sm">Drag & Drop file CSV INAP & UME di sini</p>
-            <p className="text-xs text-gray-400 mt-1">Hanya menerima format .csv</p>
+            <p className="font-bold text-blue-800">Upload Data INAP</p>
+            <p className="text-xs text-blue-600 mt-1">Drag & Drop file .CSV di sini</p>
+          </div>
+        )}
+      </div>
+
+      {/* KOTAK UME */}
+      <div 
+        className="flex-1 border-2 border-dashed border-green-300 bg-green-50 hover:bg-green-100 rounded-lg p-6 text-center cursor-pointer transition-colors"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); if(e.dataTransfer.files[0]) processUME(e.dataTransfer.files[0]); }}
+        onClick={() => umeInputRef.current.click()}
+      >
+        <input type="file" accept=".xlsx" className="hidden" ref={umeInputRef} onChange={(e) => { if(e.target.files[0]) processUME(e.target.files[0]); }} />
+        {loadingUME ? (
+          <p className="text-green-700 font-bold animate-pulse">{statusUME}</p>
+        ) : (
+          <div>
+            <p className="font-bold text-green-800">Upload Data UME</p>
+            <p className="text-xs text-green-600 mt-1">Drag & Drop file .XLSX di sini</p>
           </div>
         )}
       </div>
