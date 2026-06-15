@@ -20,10 +20,10 @@ const ContributorList = ({ title, data, dataKey }) => (
           <div className="flex-1 h-3 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
             <div 
               className="absolute top-0 right-0 h-full bg-orange-500 rounded-sm" 
-              style={{ width: `${Math.max(0, 100 - (item[dataKey] || 0))}%` }} 
+              style={{ width: `${Math.max(0, 100 - (Number(item[dataKey]) || 0))}%` }} 
             ></div>
           </div>
-          <span className="w-8 text-right text-gray-700 font-medium">{(item[dataKey] || 0).toFixed(2)}</span>
+          <span className="w-8 text-right text-gray-700 font-medium">{(Number(item[dataKey]) || 0).toFixed(2)}</span>
         </div>
       ))}
     </div>
@@ -42,7 +42,19 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       const { data } = await supabase.from('dashboard_master_view').select('*').order('period');
-      if (data) setMasterData(data);
+      if (data && data.length > 0) {
+        setMasterData(data);
+        
+        // AUTO SET TANGGAL: Narik tanggal terlama dan terbaru langsung dari database
+        const periods = data.map(d => d.period).filter(Boolean).sort();
+        if (periods.length > 0) {
+          setFilters(prev => ({
+            ...prev,
+            startDate: periods[0],
+            endDate: periods[periods.length - 1]
+          }));
+        }
+      }
     }
     fetchData();
   }, []);
@@ -71,9 +83,9 @@ export default function Dashboard() {
   const getWorstContributors = (dataKey, limit = 15) => {
     const siteAvg = {};
     filteredData.forEach(d => {
-      if (d[dataKey] === null || d[dataKey] === undefined) return;
+      if (d[dataKey] == null) return; 
       if (!siteAvg[d.site_id]) siteAvg[d.site_id] = { sum: 0, count: 0 };
-      siteAvg[d.site_id].sum += d[dataKey];
+      siteAvg[d.site_id].sum += Number(d[dataKey]);
       siteAvg[d.site_id].count += 1;
     });
     return Object.keys(siteAvg)
@@ -86,30 +98,30 @@ export default function Dashboard() {
   const worstPower = getWorstContributors('ava_power');
   const worstTransport = getWorstContributors('ava_transport');
 
-  // PERBAIKAN GRAFIK: Mapping pakai { x: timestamp, y: value } biar garis nggak putus!
   const categories = [...new Set(filteredData.map(item => item.period))].sort();
 
+  // FIX GRAFIK: Pakai Number() biar Supabase ga ngirim string, dan ngecek null beneran
   const buildSeries = (key, name) => ({
     name,
     data: categories.map(date => {
-      const dayData = filteredData.filter(d => d.period === date && typeof d[key] === 'number');
+      const dayData = filteredData.filter(d => d.period === date && d[key] != null);
       if(!dayData.length) return null;
       return {
         x: new Date(date).getTime(),
-        y: parseFloat((dayData.reduce((acc, curr) => acc + curr[key], 0) / dayData.length).toFixed(2))
+        y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2))
       };
-    }).filter(item => item !== null) // Hapus gap kosong
+    }).filter(item => item !== null) 
   });
 
   const buildSeriesByGroup = (groupKey, dataKey, groupList) => {
     return groupList.map(groupVal => ({
       name: groupVal,
       data: categories.map(date => {
-        const match = filteredData.filter(d => d.period === date && d[groupKey] === groupVal && typeof d[dataKey] === 'number');
+        const match = filteredData.filter(d => d.period === date && d[groupKey] === groupVal && d[dataKey] != null);
         if(!match.length) return null;
         return {
           x: new Date(date).getTime(),
-          y: parseFloat((match.reduce((acc, curr) => acc + curr[dataKey], 0) / match.length).toFixed(2))
+          y: parseFloat((match.reduce((acc, curr) => acc + Number(curr[dataKey]), 0) / match.length).toFixed(2))
         };
       }).filter(item => item !== null)
     }));
@@ -130,7 +142,7 @@ export default function Dashboard() {
   const baseChartOptions = {
     chart: { type: 'line', toolbar: { show: true, tools: { download: false } }, zoom: { enabled: true } },
     stroke: { width: 2.5, curve: 'straight' },
-    markers: { size: 3, hover: { size: 6 } }, // Titik diperjelas
+    markers: { size: 3, hover: { size: 6 } }, 
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
     yaxis: { min: 94, max: 100, tickAmount: 4, labels: { style: { fontSize: '9px' } } },
     legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
