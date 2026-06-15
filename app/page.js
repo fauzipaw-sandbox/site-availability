@@ -6,6 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
+// 1. KOMPONEN DROPDOWN DENGAN SEARCH & CLEAR
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -22,7 +23,6 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   const filteredOptions = options.filter(opt => 
     String(opt.label || opt).toLowerCase().includes(search.toLowerCase())
   );
-
   const activeLabel = options.find(opt => (opt.value || opt) === value)?.label || value;
 
   return (
@@ -81,7 +81,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
-// KOMPONEN CONTRIBUTOR DENGAN HOVER POPUP TOOLTIP
+// 2. KOMPONEN CONTRIBUTOR DENGAN HOVER POPUP FULL DATA
 const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength }) => {
   return (
     <div className="w-48 bg-white p-3 border-l border-gray-100 flex flex-col z-10 relative">
@@ -93,10 +93,9 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength })
       <div className="flex-1 overflow-y-auto pr-1">
         {data.map((item, idx) => {
           const val = Number(item[dataKey]) || 0;
-          // Cari metadata dari dapotMaster
           const siteMeta = dapotMaster.find(d => d.site_id === item.site_id) || {};
           
-          // Kalkulasi Total Outage (Hrs) otomatis: (100% - Avail%) * 24 Jam * Jumlah Hari Aktif
+          // Kalkulasi Total Outage otomatis
           const lossPercentage = (100 - val) / 100;
           const totalOutageHrs = (lossPercentage * 24 * (chartDataLength || 1)).toFixed(2);
 
@@ -111,7 +110,7 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength })
               </div>
               <span className="w-8 text-right text-gray-700 font-bold">{val.toFixed(2)}</span>
 
-              {/* TOOLTIP POPUP (Muncul pas di-hover) */}
+              {/* TOOLTIP POPUP */}
               <div className="absolute top-0 right-full mr-2 hidden group-hover:flex flex-col bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-50 w-56 text-[10px] text-gray-600">
                 <div className="grid grid-cols-[100px_1fr] gap-x-2 gap-y-1">
                   <div className="text-right font-semibold">Site ID</div><div className="font-bold text-gray-800">{item.site_id}</div>
@@ -158,57 +157,66 @@ export default function Dashboard() {
     return rawDate;
   };
 
-  // 1. TARIK DATA UPDATE (HEADER KANAN) & MASTER DATA
+  // 1. INIT: TARIK MASTER DATA & INFO UPDATE TANGGAL
   useEffect(() => {
     async function loadInitialSetup() {
-      // Tarik Tanggal Min & Max buat Header Kanan
+      // Ambil metadata asli sesuai nama kolom yang lo kasih!
+      const { data: dapotData } = await supabase.from('dapot_data')
+        .select('site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route')
+        .limit(100000);
+      
+      if (dapotData) {
+        setDapotMaster(dapotData.map(d => ({
+          ...d,
+          nop: d.departemen,
+          kota_kab: d.kotakab,
+          category: d.category_type_non_3t,
+          child_total: d.jumlah_site_anakan,
+          child_site_id: d.site_id_anakan
+        })));
+      }
+
+      // Ambil Data Update (Range Tanggal)
       const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
       const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
       
-      let startD = '-', endD = '-';
       if (minDate?.[0] && maxDate?.[0]) {
-        startD = normalizeDate(minDate[0].period);
-        endD = normalizeDate(maxDate[0].period);
+        const startD = normalizeDate(minDate[0].period);
+        const endD = normalizeDate(maxDate[0].period);
         setDbUpdateRange({ start: startD, end: endD });
-        
-        // Auto-set filter kalender ngikutin data full
         setFilters(prev => ({ ...prev, startDate: startD, endDate: endD }));
-      }
-
-      // Tarik Dapot Master buat Dropdown & Tooltip
-      const { data: dapotData } = await supabase.from('dashboard_master_view').select('site_id, site_name, site_class, power_type, transport_type, category, child_total, child_site_id, grid_category_new, nop, kota_kab, kecamatan, link_route').limit(100000);
-      if (dapotData) {
-        setDapotMaster(dapotData);
       }
     }
     loadInitialSetup();
   }, []);
 
-  // 2. TARIK DATA GRAFIK BERDASARKAN FILTER
+  // 2. FILTER & FETCH GRAFIK
   useEffect(() => {
     async function fetchFilteredChartData() {
+      if (!filters.startDate || !filters.endDate) return;
+
       setLoading(true);
-      // HAPUS .limit() biar dia narik BERAPA PUN data yang ada di database
       let query = supabase.from('dashboard_master_view').select('*');
 
-      if (filters.startDate) query = query.gte('period', filters.startDate);
-      if (filters.endDate) query = query.lte('period', filters.endDate);
-      // ... (sisanya sama kayak kodingan sebelumnya)
-      
-      const { data, error } = await query; // Panggil tanpa .limit()
-      
-      if (error) console.error("Error Query:", error);
+      query = query.gte('period', filters.startDate).lte('period', filters.endDate);
+      if (filters.nop !== 'All') query = query.eq('nop', filters.nop);
+      if (filters.site_id !== 'All') query = query.eq('site_id', filters.site_id);
+      if (filters.site_class !== 'All') query = query.eq('site_class', filters.site_class);
+      if (filters.kota_kab !== 'All') query = query.eq('kota_kab', filters.kota_kab);
+      if (filters.kecamatan !== 'All') query = query.eq('kecamatan', filters.kecamatan);
+      if (filters.link_route !== 'All') query = query.eq('link_route', filters.link_route);
+      if (filters.grid_category_new !== 'All') query = query.eq('grid_category_new', filters.grid_category_new);
+
+      const { data } = await query.limit(1000000); 
       
       if (data && data.length > 0) {
-        const cleanedData = data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period);
-        setChartData(cleanedData);
+        setChartData(data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
       } else {
         setChartData([]);
       }
       setLoading(false);
     }
     fetchFilteredChartData();
-  }, [filters]);
   }, [filters]);
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
@@ -270,7 +278,7 @@ export default function Dashboard() {
     name,
     data: categories.map(date => {
       const dayData = chartData.filter(d => d.period === date && d[key] != null);
-      if(!dayData.length) return null; // FIX UME: Kalau beneran kosong biarin null biar garisnya bypass nyambung lurus
+      if(!dayData.length) return null; 
       return {
         x: new Date(date).getTime(),
         y: parseFloat((dayData.reduce((acc, curr) => acc + Number(curr[key]), 0) / dayData.length).toFixed(2)),
@@ -342,10 +350,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-2 bg-[#f3f4f6] min-h-screen font-sans pb-10">
-      
-      <style dangerouslySetInnerHTML={{__html: `
-        .apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }
-      `}} />
+      <style dangerouslySetInnerHTML={{__html: `.apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }`}} />
 
       {/* HEADER UPDATE DATA KANAN ATAS */}
       <div className="flex justify-end px-3 pt-2">
