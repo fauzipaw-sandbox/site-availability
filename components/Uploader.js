@@ -13,30 +13,45 @@ export default function Uploader() {
   const inapInputRef = useRef(null);
   const umeInputRef = useRef(null);
 
+  // --- FUNGSI SAKTI: Kirim Data Dicicil (Chunking) ---
+  const insertInChunks = async (tableName, data, setStatusFunc) => {
+    const CHUNK_SIZE = 1000; // Dikirim per 1000 baris biar Supabase gak jebol
+    const totalChunks = Math.ceil(data.length / CHUNK_SIZE);
+    
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      setStatusFunc(`Mengirim ke DB: ${i * CHUNK_SIZE} dari ${data.length} baris...`);
+      
+      const { error } = await supabase.from(tableName).insert(chunk);
+      if (error) throw error;
+    }
+  };
+
   // --- PROSES INAP (HANYA CSV) ---
   const processINAP = (file) => {
     setLoadingINAP(true);
-    setStatusINAP('Membaca CSV...');
+    setStatusINAP('Membaca file CSV (Tunggu sebentar)...');
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
         try {
+          setStatusINAP('Merangum data INAP...');
           const formattedData = results.data.map(row => ({
-            period: row.period ? `${row.period.slice(0, 4)}-${row.period.slice(4, 6)}-${row.period.slice(6, 8)}` : null, 
+            period: row.period ? `${String(row.period).slice(0, 4)}-${String(row.period).slice(4, 6)}-${String(row.period).slice(6, 8)}` : null, 
             site_id: row.site_id,
             availability: parseFloat(row['availability (%)']) || 0,
             ava_power: parseFloat(row['ava_power (%)']) || 0,
             ava_transport: parseFloat(row['ava_transport (%)']) || 0,
-          })).filter(row => row.period !== null);
+          })).filter(row => row.period !== null && row.site_id);
 
-          setStatusINAP('Menyimpan ke database...');
-          const { error } = await supabase.from('inap_data').insert(formattedData);
+          if (formattedData.length === 0) throw new Error("Data kosong atau format kolom CSV tidak sesuai!");
+
+          await insertInChunks('inap_data', formattedData, setStatusINAP);
           
-          if (error) throw error;
-          setStatusINAP('✅ Sukses!');
-          setTimeout(() => { setLoadingINAP(false); window.location.reload(); }, 1500);
+          setStatusINAP('✅ Sukses Upload INAP!');
+          setTimeout(() => { setLoadingINAP(false); window.location.reload(); }, 2000);
         } catch (err) {
           setStatusINAP(`❌ Error: ${err.message}`);
           setLoadingINAP(false);
@@ -52,7 +67,7 @@ export default function Uploader() {
   // --- PROSES UME (HANYA XLSX) ---
   const processUME = (file) => {
     setLoadingUME(true);
-    setStatusUME('Membaca Excel...');
+    setStatusUME('Membaca file Excel (Ini agak lama kalau filenya gede)...');
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -60,21 +75,17 @@ export default function Uploader() {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
         
-        // Ambil sheet pertama
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        
-        // Convert ke JSON. SheetJS otomatis handle kolom duplikat jadi _1, _2 dst.
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-        setStatusUME('Memproses data...');
+        setStatusUME('Merangkum data UME...');
         const formattedData = jsonData.map(row => {
-          // SheetJS ngasih nama kolom kembar jadi "NamaKolom_1"
           const avail1 = parseFloat(row['Cell Availability _TSEL']) || 0;
           const avail2 = parseFloat(row['Cell Availability _TSEL_1']) || parseFloat(row['Cell Availability _TSEL_2']) || 0; 
           
           let parsedSiteId = "";
-          const matchId = row['Managed Element']?.match(/\(([^)]+)\)/);
+          const matchId = String(row['Managed Element'] || '').match(/\(([^)]+)\)/);
           if(matchId) parsedSiteId = matchId[1];
 
           return {
@@ -86,12 +97,12 @@ export default function Uploader() {
           };
         }).filter(row => row.period !== null && row.site_id !== "");
 
-        setStatusUME('Menyimpan ke database...');
-        const { error } = await supabase.from('ume_data').insert(formattedData);
+        if (formattedData.length === 0) throw new Error("Data kosong atau format kolom Excel tidak sesuai!");
+
+        await insertInChunks('ume_data', formattedData, setStatusUME);
         
-        if (error) throw error;
-        setStatusUME('✅ Sukses!');
-        setTimeout(() => { setLoadingUME(false); window.location.reload(); }, 1500);
+        setStatusUME('✅ Sukses Upload UME!');
+        setTimeout(() => { setLoadingUME(false); window.location.reload(); }, 2000);
 
       } catch (err) {
         setStatusUME(`❌ Error: ${err.message}`);
@@ -112,7 +123,7 @@ export default function Uploader() {
       >
         <input type="file" accept=".csv" className="hidden" ref={inapInputRef} onChange={(e) => { if(e.target.files[0]) processINAP(e.target.files[0]); }} />
         {loadingINAP ? (
-          <p className="text-blue-700 font-bold animate-pulse">{statusINAP}</p>
+          <p className="text-blue-700 font-bold animate-pulse text-sm">{statusINAP}</p>
         ) : (
           <div>
             <p className="font-bold text-blue-800">Upload Data INAP</p>
@@ -130,7 +141,7 @@ export default function Uploader() {
       >
         <input type="file" accept=".xlsx" className="hidden" ref={umeInputRef} onChange={(e) => { if(e.target.files[0]) processUME(e.target.files[0]); }} />
         {loadingUME ? (
-          <p className="text-green-700 font-bold animate-pulse">{statusUME}</p>
+          <p className="text-green-700 font-bold animate-pulse text-sm">{statusUME}</p>
         ) : (
           <div>
             <p className="font-bold text-green-800">Upload Data UME</p>
