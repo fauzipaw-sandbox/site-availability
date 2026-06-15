@@ -6,7 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// KOMPONEN: CUSTOM DROPDOWN
+// KOMPONEN: CUSTOM DROPDOWN SEARCHABLE
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -27,7 +27,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
 
   return (
     <div className="flex flex-col w-[48%] md:w-40 relative" ref={wrapperRef}>
-      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]" title={label}>{label}</label>
+      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]">{label}</label>
       <div 
         className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300 transition-colors"
         onClick={() => setIsOpen(!isOpen)}
@@ -125,7 +125,7 @@ export default function Dashboard() {
   const fetchAllData = async (tableName, columns, customQuery = null) => {
     let allData = [];
     let start = 0;
-    const step = 1000; 
+    const step = 2000; 
     let hasMore = true;
 
     while (hasMore) {
@@ -164,6 +164,7 @@ export default function Dashboard() {
         const endD = normalizeDate(maxDate[0].period);
         setDbUpdateRange({ start: startD, end: endD });
         
+        // Auto default load 30 hari ke belakang biar sekenceng Power BI
         const latestDateObj = new Date(endD);
         latestDateObj.setDate(latestDateObj.getDate() - 30);
         const defaultStartStr = latestDateObj.toISOString().split('T')[0];
@@ -251,7 +252,6 @@ export default function Dashboard() {
       .slice(0, limit);
   };
 
-  // INI DIA VARIABEL YANG KELUPAAN KEMARIN!
   const worstINAP = getWorstContributors('inap_avail');
   const worstPower = getWorstContributors('ava_power');
   const worstTransport = getWorstContributors('ava_transport');
@@ -301,13 +301,14 @@ export default function Dashboard() {
   const gridCategories = getCascadingOptions('grid_category_new').filter(opt => opt !== 'All' && opt !== 'Unknown');
   const seriesGrid = buildSeriesByGroup('grid_category_new', 'ava_power', gridCategories);
 
+  // FIX POIN 1: Legend ukuran font dikecilin jadi 9px biar rapi
   const baseChartOptions = {
     chart: { type: 'line', animations: { enabled: false }, toolbar: { show: true, tools: { download: true, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } }, zoom: { enabled: true, type: 'x' } },
     stroke: { width: 2, curve: 'smooth' }, 
     markers: { size: 0, hover: { size: 5 } }, 
     xaxis: { type: 'datetime', labels: { style: { fontSize: '9px' }, datetimeUTC: false } },
     yaxis: { max: 100, labels: { style: { fontSize: '9px' }, formatter: (val) => val.toFixed(1) } },
-    legend: { position: 'top', fontSize: '11px', markers: { radius: 12 }, itemMargin: { horizontal: 10, vertical: 5 } },
+    legend: { position: 'top', fontSize: '9px', markers: { radius: 12 }, itemMargin: { horizontal: 8, vertical: 4 } },
     grid: { show: true, strokeDashArray: 3, borderColor: '#f1f1f1' },
     tooltip: { shared: true, intersect: false, theme: 'light', y: { formatter: function (val, { seriesIndex, dataPointIndex, w }) {
       const dataPoint = w?.globals?.initialSeries?.[seriesIndex]?.data?.[dataPointIndex];
@@ -316,6 +317,18 @@ export default function Dashboard() {
   };
 
   const siteClassColors = ['#CD7F32', '#C0C0C0', '#FFD700', '#3B82F6', '#FF69B4'];
+
+  // FIX POIN 4: Fungsi deteksi warna dinamis untuk popup kelas dapot
+  const getDynamicClassColor = (cls) => {
+    switch(String(cls).toUpperCase()) {
+      case 'BRONZE': return 'text-[#CD7F32]';
+      case 'SILVER': return 'text-[#sig-silver] font-bold text-gray-400';
+      case 'GOLD': return 'text-[#FFD700]';
+      case 'PLATINUM': return 'text-[#3B82F6]';
+      case 'DIAMOND': return 'text-[#FF69B4]';
+      default: return 'text-blue-600';
+    }
+  };
 
   const filterDropdowns = [
     { label: 'NOP', key: 'nop' }, { label: 'Site ID', key: 'site_id' }, 
@@ -328,26 +341,26 @@ export default function Dashboard() {
     <div className="p-2 md:p-4 bg-[#f3f4f6] min-h-screen font-sans pb-10">
       <style dangerouslySetInnerHTML={{__html: `.apexcharts-toolbar { transform: scale(0.7); transform-origin: top right; z-index: 90 !important; }`}} />
 
+      {/* FLOATING PORTAL TOOLTIP POPUP */}
       {tooltipData && (
         <div 
           className="fixed bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-[9999] w-56 text-[10px] text-gray-600 pointer-events-none"
           style={{ 
-            top: Math.min(tooltipData.y + 10, window.innerHeight - 250), 
+            top: Math.min(tooltipData.y + 10, window.innerHeight - 260), 
             left: Math.min(tooltipData.x + 10, window.innerWidth - 250)  
           }}
         >
-          <div className="grid grid-cols-[90px_1fr] gap-x-2 gap-y-1">
-            <div className="text-right font-semibold text-gray-800">Site ID</div><div className="font-bold text-gray-900">{tooltipData.item.site_id}</div>
-            <div className="text-right font-semibold">Avg Ava Power</div><div>{(Number(tooltipData.item.ava_power) || tooltipData.val).toFixed(2)}%</div>
-            <div className="text-right font-semibold">Site Name</div><div className="truncate text-gray-900 font-medium" title={tooltipData.meta.site_name}>{tooltipData.meta.site_name || '-'}</div>
-            <div className="text-right font-semibold">Site Class</div><div className="font-semibold text-blue-600">{tooltipData.meta.site_class || '-'}</div>
-            <div className="text-right font-semibold">Power Type</div><div>{tooltipData.meta.power_type || '-'}</div>
-            <div className="text-right font-semibold">Transport Type</div><div>{tooltipData.meta.transport_type || '-'}</div>
-            <div className="text-right font-semibold">Avg Ava Transport</div><div>{(Number(tooltipData.item.ava_transport) || tooltipData.val).toFixed(2)}%</div>
-            <div className="text-right font-semibold">Total Outage</div><div className="font-bold text-rose-600">{tooltipData.outage} Hrs</div>
-            <div className="text-right font-semibold">Category</div><div>{tooltipData.meta.category || '-'}</div>
-            <div className="text-right font-semibold">Child Total</div><div>{tooltipData.meta.child_total || '0'}</div>
-            <div className="text-right font-semibold">Child Site ID</div><div className="truncate" title={tooltipData.meta.child_site_id}>{tooltipData.meta.child_site_id || '-'}</div>
+          {/* FIX POIN 4: Atas bawah (stacked), warna kelas dinamis */}
+          <div className="flex flex-col gap-1.5">
+            <div className="border-b pb-1 flex justify-between"><span className="font-bold text-gray-800">Site ID: {tooltipData.item.site_id}</span><span className={`font-bold ${getDynamicClassColor(tooltipData.meta.site_class)}`}>{tooltipData.meta.site_class || '-'}</span></div>
+            <div className="truncate"><span className="font-semibold">Name:</span> {tooltipData.meta.site_name || '-'}</div>
+            <div className="grid grid-cols-2 gap-1 border-t border-b py-1 my-0.5 bg-gray-50 p-1 rounded">
+              <div><p className="font-semibold text-gray-500">Ava Power</p><p className="font-bold text-gray-800">{(Number(tooltipData.item.ava_power) || tooltipData.val).toFixed(2)}%</p></div>
+              <div><p className="font-semibold text-gray-500">Ava Transport</p><p className="font-bold text-gray-800">{(Number(tooltipData.item.ava_transport) || tooltipData.val).toFixed(2)}%</p></div>
+            </div>
+            <div className="flex justify-between"><span className="font-semibold">Power / Trans:</span> <span>{tooltipData.meta.power_type || '-'} / {tooltipData.meta.transport_type || '-'}</span></div>
+            <div className="flex justify-between font-medium text-rose-600"><span className="font-semibold">Total Outage:</span> <span>{tooltipData.outage} Hrs</span></div>
+            <div className="text-[9px] text-gray-400 pt-0.5 border-t">Category: {tooltipData.meta.category || '-'} | Child: {tooltipData.meta.child_total || '0'}</div>
           </div>
         </div>
       )}
