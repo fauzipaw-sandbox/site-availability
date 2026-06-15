@@ -26,7 +26,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
 
   return (
     <div className="flex flex-col w-[48%] md:w-40 relative" ref={wrapperRef}>
-      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]">{label}</label>
+      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]" title={label}>{label}</label>
       <div 
         className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300 transition-colors"
         onClick={() => setIsOpen(!isOpen)}
@@ -99,8 +99,11 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, chartDataLength, o
 
 export default function Dashboard() {
   const [dapotMaster, setDapotMaster] = useState([]); 
-  const [chartData, setChartData] = useState([]);     
+  const [rawServerData, setRawServerData] = useState([]); // DATA MENTAH DARI SERVER (IN-MEMORY)
+  const [chartData, setChartData] = useState([]);     // DATA JADI SETELAH DIFILTER LOKAL
+  
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [dbUpdateRange, setDbUpdateRange] = useState({ start: '-', end: '-' });
   const [tooltipData, setTooltipData] = useState(null); 
 
@@ -133,7 +136,6 @@ export default function Dashboard() {
       const { data, error } = await query;
       if (error) {
         console.error("Supabase Error:", error);
-        alert(`GAGAL TARIK DATA SERVER!\nError: ${error.message}`);
         hasMore = false;
       } else if (!data || data.length === 0) {
         hasMore = false;
@@ -144,6 +146,15 @@ export default function Dashboard() {
       }
     }
     return allData;
+  };
+
+  // TOMBOL SYNC MANUAL (Refresh Materialized View)
+  const handleSyncDB = async () => {
+    setSyncing(true);
+    await supabase.rpc('refresh_master_data');
+    setSyncing(false);
+    alert("✅ Database berhasil disinkronisasi dengan data Upload terbaru!\nSilakan klik OK untuk merefresh grafik.");
+    window.location.reload();
   };
 
   useEffect(() => {
@@ -158,11 +169,9 @@ export default function Dashboard() {
         })));
       }
 
-      const { data: minDate, error: minErr } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
-      const { data: maxDate, error: maxErr } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
+      const { data: minDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: true }).limit(1);
+      const { data: maxDate } = await supabase.from('dashboard_master_view').select('period').not('period', 'is', null).order('period', { ascending: false }).limit(1);
       
-      if (minErr || maxErr) console.error("Error Date Range:", minErr || maxErr);
-
       if (minDate?.[0] && maxDate?.[0]) {
         const startD = normalizeDate(minDate[0].period);
         const endD = normalizeDate(maxDate[0].period);
@@ -178,34 +187,42 @@ export default function Dashboard() {
     loadInitialSetup();
   }, []);
 
+  // ENGINE POWER BI - TAHAP 1: Ambil data dari server HANYA saat Tanggal Berubah
   useEffect(() => {
-    async function fetchFilteredChartData() {
+    async function fetchServerData() {
       if (!filters.startDate || !filters.endDate) return;
 
       setLoading(true);
-      const colsToFetch = 'period, site_id, ava_power, ava_transport, inap_avail, avail_ume, all_ne_avail, site_class, grid_category_new';
+      const colsToFetch = 'period, site_id, ava_power, ava_transport, inap_avail, avail_ume, all_ne_avail, site_class, grid_category_new, nop, kota_kab, kecamatan, link_route';
 
-      const chartRawData = await fetchAllData('dashboard_master_view', colsToFetch, (query) => {
-        let q = query.gte('period', filters.startDate).lte('period', filters.endDate);
-        if (filters.nop !== 'All') q = q.eq('nop', filters.nop);
-        if (filters.site_id !== 'All') q = q.eq('site_id', filters.site_id);
-        if (filters.site_class !== 'All') q = q.eq('site_class', filters.site_class);
-        if (filters.kota_kab !== 'All') q = q.eq('kota_kab', filters.kota_kab);
-        if (filters.kecamatan !== 'All') q = q.eq('kecamatan', filters.kecamatan);
-        if (filters.link_route !== 'All') q = q.eq('link_route', filters.link_route);
-        if (filters.grid_category_new !== 'All') q = q.eq('grid_category_new', filters.grid_category_new);
-        return q;
+      const data = await fetchAllData('dashboard_master_view', colsToFetch, (query) => {
+        return query.gte('period', filters.startDate).lte('period', filters.endDate);
       });
       
-      if (chartRawData.length > 0) {
-        setChartData(chartRawData.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
+      if (data.length > 0) {
+        setRawServerData(data.map(d => ({ ...d, period: normalizeDate(d.period) })).filter(d => d.period));
       } else {
-        setChartData([]);
+        setRawServerData([]);
       }
       setLoading(false);
     }
-    fetchFilteredChartData();
-  }, [filters]);
+    fetchServerData();
+  }, [filters.startDate, filters.endDate]);
+
+  // ENGINE POWER BI - TAHAP 2: Filtering Dropdown & Klik Site Instan di Memori Lokal (0 detik)
+  useEffect(() => {
+    const filtered = rawServerData.filter(d => {
+      if (filters.nop !== 'All' && d.nop !== filters.nop) return false;
+      if (filters.site_id !== 'All' && d.site_id !== filters.site_id) return false;
+      if (filters.site_class !== 'All' && d.site_class !== filters.site_class) return false;
+      if (filters.kota_kab !== 'All' && d.kota_kab !== filters.kota_kab) return false;
+      if (filters.kecamatan !== 'All' && d.kecamatan !== filters.kecamatan) return false;
+      if (filters.link_route !== 'All' && d.link_route !== filters.link_route) return false;
+      if (filters.grid_category_new !== 'All' && d.grid_category_new !== filters.grid_category_new) return false;
+      return true;
+    });
+    setChartData(filtered);
+  }, [filters, rawServerData]);
 
   const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
@@ -346,8 +363,8 @@ export default function Dashboard() {
         <div 
           className="fixed bg-white border border-gray-200 shadow-2xl p-3 rounded-lg z-[9999] w-56 text-[10px] text-gray-600 pointer-events-none"
           style={{ 
-            top: Math.min(tooltipData.y + 10, window.innerHeight - 260), 
-            left: Math.min(tooltipData.x + 10, window.innerWidth - 250)  
+            top: Math.min(tooltipData.y + 10, typeof window !== 'undefined' ? window.innerHeight - 260 : 0), 
+            left: Math.min(tooltipData.x + 10, typeof window !== 'undefined' ? window.innerWidth - 250 : 0)  
           }}
         >
           <div className="flex flex-col gap-1.5">
@@ -357,17 +374,26 @@ export default function Dashboard() {
               <div><p className="font-semibold text-gray-500">Ava Power</p><p className="font-bold text-gray-800">{(Number(tooltipData.item.ava_power) || tooltipData.val).toFixed(2)}%</p></div>
               <div><p className="font-semibold text-gray-500">Ava Transport</p><p className="font-bold text-gray-800">{(Number(tooltipData.item.ava_transport) || tooltipData.val).toFixed(2)}%</p></div>
             </div>
-            <div className="flex justify-between"><span className="font-semibold">Power / Trans:</span> <span>{tooltipData.meta.power_type || '-'} / {tooltipData.meta.transport_type || '-'}</span></div>
+            <div className="flex justify-between"><span className="font-semibold">Power / Trans:</span> <span className="truncate ml-2">{tooltipData.meta.power_type || '-'} / {tooltipData.meta.transport_type || '-'}</span></div>
             <div className="flex justify-between font-medium text-rose-600"><span className="font-semibold">Total Outage:</span> <span>{tooltipData.outage} Hrs</span></div>
             <div className="text-[9px] text-gray-400 pt-0.5 border-t">Category: {tooltipData.meta.category || '-'} | Child: {tooltipData.meta.child_total || '0'}</div>
           </div>
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row justify-between items-center px-1 mb-2">
-        <h1 className="font-bold text-gray-700 text-lg mb-2 md:mb-0">Network Availability Dashboard</h1>
-        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 rounded-full text-[10px] font-bold shadow-sm">
-          Data Range: {dbUpdateRange.start} s/d {dbUpdateRange.end}
+      <div className="flex flex-col md:flex-row justify-between items-center px-1 mb-2 gap-2">
+        <h1 className="font-bold text-gray-700 text-lg md:text-xl">Network Availability Dashboard</h1>
+        <div className="flex items-center gap-2">
+          <div className="bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-sm">
+            Data Range: {dbUpdateRange.start} s/d {dbUpdateRange.end}
+          </div>
+          <button 
+            onClick={handleSyncDB} 
+            disabled={syncing}
+            className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-full text-[10px] font-bold shadow-sm transition-colors flex items-center disabled:opacity-50"
+          >
+            {syncing ? 'Memproses Sync...' : '🔄 Sync Database'}
+          </button>
         </div>
       </div>
 
@@ -384,7 +410,7 @@ export default function Dashboard() {
         {filterDropdowns.map(filter => (
           <SearchableSelect key={filter.key} label={filter.label} options={getCascadingOptions(filter.key)} value={filters[filter.key]} onChange={(val) => handleFilterChange(filter.key, val)} />
         ))}
-        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0">Tarik Data Server...</div>}
+        {loading && <div className="text-blue-500 font-bold animate-pulse text-[11px] w-full md:w-auto text-center mt-2 md:mt-0 px-2">Memuat Data Database...</div>}
       </div>
 
       <div className="relative z-0">
