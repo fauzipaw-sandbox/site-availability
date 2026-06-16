@@ -6,7 +6,7 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-// Variabel filter ditaruh di atas biar Vercel nggak error
+// 1. Kunci posisi variabel filter di paling atas biar Vercel anteng pas build
 const filterDropdowns = [
   { label: 'NOP', key: 'nop' }, { label: 'Site ID', key: 'site_id' }, 
   { label: 'Site Class', key: 'site_class' }, { label: 'Kota/Kab', key: 'kota_kab' }, 
@@ -14,30 +14,44 @@ const filterDropdowns = [
   { label: 'Grid', key: 'grid_category_new' }
 ];
 
+// KOMPONEN: CUSTOM DROPDOWN SEARCHABLE
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const wrapperRef = useRef(null);
 
   useEffect(() => {
-    const handleClickOutside = (event) => { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); };
+    const handleClickOutside = (event) => { 
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); 
+    };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filteredOptions = options.filter(opt => String(opt.label || opt).toLowerCase().includes(search.toLowerCase()));
+  const filteredOptions = options.filter(opt => 
+    String(opt.label || opt).toLowerCase().includes(search.toLowerCase())
+  );
   const activeLabel = options.find(opt => (opt.value || opt) === value)?.label || value;
 
   return (
     <div className="flex flex-col w-[48%] md:w-40 relative" ref={wrapperRef}>
-      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]" title={label}>{label}</label>
-      <div className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300" onClick={() => setIsOpen(!isOpen)}>
+      <label className="text-gray-500 mb-1 truncate font-semibold text-[10px]">{label}</label>
+      <div 
+        className="border px-2 py-1.5 rounded outline-none focus:border-blue-400 bg-white cursor-pointer flex justify-between items-center text-[10px] shadow-sm hover:border-blue-300 transition-colors" 
+        onClick={() => setIsOpen(!isOpen)}
+      >
         <span className="truncate flex-1 pr-1">{activeLabel}</span>
-        {value !== 'All' ? (<button onClick={(e) => { e.stopPropagation(); onChange('All'); }} className="text-red-400 hover:text-red-600 font-bold ml-1 px-1">✕</button>) : (<span className="text-gray-400 text-[8px] ml-1">▼</span>)}
+        {value !== 'All' ? (
+          <button onClick={(e) => { e.stopPropagation(); onChange('All'); }} className="text-red-400 hover:text-red-600 font-bold ml-1 px-1">✕</button>
+        ) : (
+          <span className="text-gray-400 text-[8px] ml-1">▼</span>
+        )}
       </div>
       {isOpen && (
         <div className="absolute top-full left-0 w-[200%] md:w-64 mt-1 bg-white border shadow-xl z-[100] rounded">
-          <div className="p-1.5 border-b bg-gray-50 rounded-t"><input type="text" className="w-full px-2 py-1 text-[10px] outline-none border rounded" placeholder={`Cari ${label}...`} value={search} onChange={(e) => setSearch(e.target.value)} onClick={(e) => e.stopPropagation()} autoFocus /></div>
+          <div className="p-1.5 border-b bg-gray-50 rounded-t">
+            <input type="text" className="w-full px-2 py-1 text-[10px] outline-none border rounded" placeholder={`Cari ${label}...`} value={search} onChange={(e) => setSearch(e.target.value)} onClick={(e) => e.stopPropagation()} autoFocus />
+          </div>
           <ul className="max-h-48 overflow-y-auto">
             {filteredOptions.length > 0 ? filteredOptions.map(opt => (
               <li key={opt.value || opt} className="px-3 py-1.5 hover:bg-blue-50 cursor-pointer text-[10px] border-b border-gray-50 truncate" onClick={() => { onChange(opt.value || opt); setIsOpen(false); setSearch(''); }}>{opt.label || opt}</li>
@@ -49,6 +63,7 @@ const SearchableSelect = ({ label, options, value, onChange }) => {
   );
 };
 
+// KOMPONEN: CONTRIBUTOR LIST
 const ContributorList = ({ title, data, dataKey, dapotMaster, onHover, onClickSite }) => (
   <div className="w-full md:w-48 bg-white p-3 border-t md:border-t-0 md:border-l border-gray-100 flex flex-col z-10">
     <h4 className="text-[11px] font-bold text-gray-700 mb-2 flex items-center"><span className="text-rose-600 mr-2 text-lg leading-none">•</span> {title}</h4>
@@ -59,7 +74,9 @@ const ContributorList = ({ title, data, dataKey, dapotMaster, onHover, onClickSi
         return (
           <div key={idx} className="flex items-center text-[10px] mb-1.5 cursor-pointer hover:bg-gray-50 rounded p-0.5" onMouseEnter={(e) => onHover({ x: e.clientX, y: e.clientY, item, meta: siteMeta, val })} onMouseLeave={() => onHover(null)} onClick={() => onClickSite(item.site_id)}>
             <span className="w-12 truncate text-gray-500 font-medium">{item.site_id}</span>
-            <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden"><div className="absolute top-0 right-0 h-full bg-rose-500 rounded-sm" style={{ width: `${Math.max(0, 100 - val)}%` }}></div></div>
+            <div className="flex-1 h-2.5 bg-gray-100 mx-2 relative rounded-sm overflow-hidden">
+              <div className="absolute top-0 right-0 h-full bg-rose-500 rounded-sm" style={{ width: `${Math.max(0, 100 - val)}%` }}></div>
+            </div>
             <span className="w-8 text-right text-gray-700 font-bold">{val.toFixed(2)}</span>
           </div>
         );
@@ -86,11 +103,37 @@ export default function Dashboard() {
     window.location.reload();
   };
 
+  // Paging estafet balikin khusus data dapot biar bypass limit 1000 server & nampilkan seluruh pilihan filter
+  const fetchDapotInChunks = async () => {
+    let allData = [];
+    let start = 0;
+    const step = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('dapot_data')
+        .select('site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route')
+        .range(start, start + step - 1);
+      
+      if (error || !data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allData = allData.concat(data);
+        if (data.length < step) hasMore = false;
+        else start += step;
+      }
+    }
+    return allData;
+  };
+
   useEffect(() => {
     async function init() {
       setLoading(true);
-      const { data: dapot } = await supabase.from('dapot_data').select('site_id, site_name, departemen, site_class, power_type, transport_type, category_type_non_3t, jumlah_site_anakan, site_id_anakan, grid_category_new, kotakab, kecamatan, link_route').limit(50000);
-      if (dapot) setDapotMaster(dapot.map(d => ({ ...d, nop: d.departemen, kota_kab: d.kotakab, category: d.category_type_non_3t, child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan })));
+      const dapot = await fetchDapotInChunks();
+      if (dapot && dapot.length > 0) {
+        setDapotMaster(dapot.map(d => ({ ...d, nop: d.departemen, kota_kab: d.kotakab, category: d.category_type_non_3t, child_total: d.jumlah_site_anakan, child_site_id: d.site_id_anakan })));
+      }
       
       const { data: minD } = await supabase.from('dashboard_master_view').select('period').order('period', { ascending: true }).limit(1);
       const { data: maxD } = await supabase.from('dashboard_master_view').select('period').order('period', { ascending: false }).limit(1);
@@ -200,6 +243,8 @@ export default function Dashboard() {
 
       <div className="relative z-0">
         <div className="hidden md:block mb-3"><Uploader /></div>
+        
+        {/* ROW 1: TYPE ALL & EXCLUDE SPS (Dua kolom sejajar kiri kanan) */}
         <div className="flex flex-col md:flex-row gap-3 mb-3 h-auto md:h-[280px]">
           <div className="flex-1 bg-white flex flex-col md:flex-row shadow-sm rounded border border-gray-100 h-72 md:h-full">
             <div className="flex-1 p-2 flex flex-col min-w-0">
@@ -208,7 +253,17 @@ export default function Dashboard() {
             </div>
             <ContributorList title="Worst Contributor" data={analytics.worst_inap || []} dataKey="inap_avail" dapotMaster={dapotMaster} onHover={setTooltipData} onClickSite={(id) => handleFilterChange('site_id', id)} />
           </div>
+          
+          <div className="flex-1 bg-white flex flex-col md:flex-row shadow-sm rounded border border-gray-100 h-72 md:h-full">
+            <div className="flex-1 p-2 flex flex-col min-w-0">
+              <h3 className="text-xs font-bold text-center text-gray-700 mb-1">Availability by Type (Exclude SPS)</h3>
+              <div className="flex-1">{analytics.summary?.length > 0 ? <Chart options={baseChartOptions} series={seriesAll} type="line" height="100%" /> : <div className="flex h-full items-center justify-center text-gray-400 text-xs">Pilih filter tanggal valid</div>}</div>
+            </div>
+            <ContributorList title="Worst Contributor" data={analytics.worst_inap || []} dataKey="inap_avail" dapotMaster={dapotMaster} onHover={setTooltipData} onClickSite={(id) => handleFilterChange('site_id', id)} />
+          </div>
         </div>
+
+        {/* ROW 2: SITE CLASS POWER & SITE CLASS TRANSPORT (Dua kolom sejajar kiri kanan) */}
         <div className="flex flex-col md:flex-row gap-3 mb-3 h-auto md:h-[280px]">
           <div className="flex-1 bg-white flex flex-col md:flex-row shadow-sm rounded border border-gray-100 relative h-72 md:h-full">
             <div className="absolute hidden md:flex left-0 top-0 bottom-0 w-6 bg-gray-50 border-r items-center justify-center z-10 rounded-l"><span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest">POWER</span></div>
@@ -218,7 +273,8 @@ export default function Dashboard() {
             </div>
             <ContributorList title="Worst Power" data={analytics.worst_power || []} dataKey="ava_power" dapotMaster={dapotMaster} onHover={setTooltipData} onClickSite={(id) => handleFilterChange('site_id', id)} />
           </div>
-          <div className="flex-1 bg-white flex flex-col md:flex-row shadow-sm rounded border border-gray-100 relative h-72 md:h-full mt-3 md:mt-0">
+          
+          <div className="flex-1 bg-white flex flex-col md:flex-row shadow-sm rounded border border-gray-100 relative h-72 md:h-full">
             <div className="absolute hidden md:flex left-0 top-0 bottom-0 w-6 bg-gray-50 border-r items-center justify-center z-10 rounded-l"><span className="-rotate-90 text-[10px] font-bold text-gray-400 tracking-widest">TRANSPORT</span></div>
             <div className="flex-1 p-2 flex flex-col min-w-0 md:pl-8">
               <h3 className="text-xs font-bold text-center text-gray-700 mb-1">Availability by Site Class (Transport)</h3>
@@ -227,6 +283,15 @@ export default function Dashboard() {
             <ContributorList title="Worst Transport" data={analytics.worst_transport || []} dataKey="ava_transport" dapotMaster={dapotMaster} onHover={setTooltipData} onClickSite={(id) => handleFilterChange('site_id', id)} />
           </div>
         </div>
+
+        {/* ROW 3: GRID CATEGORY (Balikin lebar penuh) */}
+        <div className="bg-white flex flex-col md:flex-row shadow-sm h-64 md:h-[280px] mb-4 rounded border border-gray-100 transition-all hover:shadow-md">
+          <div className="flex-1 p-2 flex flex-col min-w-0">
+            <h3 className="text-xs font-bold text-center text-gray-700 mb-1 mt-1">Availability by Grid Category</h3>
+            <div className="flex-1">{analytics.grid_data?.length > 0 ? <Chart options={{...baseChartOptions, colors: ['#03A9F4', '#3F51B5', '#FF9800', '#9C27B0', '#E91E63']}} series={buildSeriesGroup('grid_category_new', 'avg_power', gridCategories)} type="line" height="100%" /> : <div className="flex h-full items-center justify-center text-gray-400 text-xs">Data Grid Category Kosong</div>}</div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
