@@ -6,6 +6,14 @@ import Uploader from '../components/Uploader';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
+// Variabel filter ditaruh di atas biar Vercel nggak error
+const filterDropdowns = [
+  { label: 'NOP', key: 'nop' }, { label: 'Site ID', key: 'site_id' }, 
+  { label: 'Site Class', key: 'site_class' }, { label: 'Kota/Kab', key: 'kota_kab' }, 
+  { label: 'Kecamatan', key: 'kecamatan' }, { label: 'Link Route', key: 'link_route' }, 
+  { label: 'Grid', key: 'grid_category_new' }
+];
+
 const SearchableSelect = ({ label, options, value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -70,7 +78,6 @@ export default function Dashboard() {
 
   const [filters, setFilters] = useState({ startDate: '', endDate: '', nop: 'All', site_id: 'All', site_class: 'All', kota_kab: 'All', kecamatan: 'All', link_route: 'All', grid_category_new: 'All' });
 
-  // 1. Tombol Sync Admin Otomatis Hit Refresh Materialized View
   const handleSyncDB = async () => {
     setSyncing(true);
     await supabase.rpc('refresh_dashboard');
@@ -79,7 +86,6 @@ export default function Dashboard() {
     window.location.reload();
   };
 
-  // 2. Tarik Dapot Awal & Tanggal Mentah
   useEffect(() => {
     async function init() {
       setLoading(true);
@@ -99,7 +105,6 @@ export default function Dashboard() {
     init();
   }, []);
 
-  // 3. Hit Database Index Kilat!
   useEffect(() => {
     async function fetchAnalytics() {
       if (!filters.startDate || !filters.endDate) return;
